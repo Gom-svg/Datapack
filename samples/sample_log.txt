@@ -1,0 +1,6 @@
+2026-07-09T10:00:00Z INFO service started
+2026-07-09T10:00:01Z INFO connected to database
+2026-07-09T10:00:02Z INFO connected to database
+2026-07-09T10:00:03Z WARN retry database query
+2026-07-09T10:00:04Z WARN retry database query
+2026-07-09T10:00:05Z INFO service stopped

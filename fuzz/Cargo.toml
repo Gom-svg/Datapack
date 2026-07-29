@@ -1,0 +1,40 @@
+[package]
+name = "datapack-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+datapack = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "csv_roundtrip"
+path = "fuzz_targets/csv_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v2_archive_parser"
+path = "fuzz_targets/v2_archive_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v2_decompress_mutated_archive"
+path = "fuzz_targets/v2_decompress_mutated_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_table_validation"
+path = "fuzz_targets/chunk_table_validation.rs"
+test = false
+doc = false
+bench = false

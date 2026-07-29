@@ -1,0 +1,9 @@
+id,region,status,category
+1,north,open,hardware
+2,north,open,hardware
+3,south,closed,software
+4,north,open,hardware
+5,south,open,software
+6,west,closed,hardware
+7,north,open,hardware
+8,west,open,software
