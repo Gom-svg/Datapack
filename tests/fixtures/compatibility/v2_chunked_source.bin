@@ -1,0 +1,8 @@
+DataPack compatibility fixture block 0001: alpha beta gamma delta.
+DataPack compatibility fixture block 0002: exact bytes remain stable.
+DataPack compatibility fixture block 0003: chunk boundaries are intentional.
+DataPack compatibility fixture block 0004: SHA-256 validates identity.
+DataPack compatibility fixture block 0005: ordered payloads are deterministic.
+DataPack compatibility fixture block 0006: multichunk restoration is required.
+DataPack compatibility fixture block 0007: no encoder runs in the test.
+DataPack compatibility fixture block 0008: frozen baseline pre-refactor.

@@ -1,0 +1,33 @@
+code,category,region,status,note
+"0001",alpha,north,active,"hello, world"
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0001",alpha,north,active,"hello, world"
+"0003",gamma,east,active,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0004",delta,west,pending,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0001",alpha,north,active,"hello, world"
+"0003",gamma,east,active,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0004",delta,west,pending,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0001",alpha,north,active,"hello, world"
+"0003",gamma,east,active,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0004",delta,west,pending,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0001",alpha,north,active,"hello, world"
+"0003",gamma,east,active,"quoted ""value"""
+"0001",alpha,north,active,"hello, world"
+"0002",beta,south,inactive,
+"0004",delta,west,pending,"quoted ""value"""
