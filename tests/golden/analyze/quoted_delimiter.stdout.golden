@@ -1,0 +1,8 @@
+DataPack Analysis: quoted_delimiter.csv
+Original size:     56 bytes
+Sampled rows:      3
+Sampled bytes:     56
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+id             DeltaCandidate             3      0.0%  Numeric/date heuristic matched; avg 1.0 bytes
+note           Dictionary                 2     33.3%  Repeated values likely benefit from dictionary IDs; avg 13.0 bytes

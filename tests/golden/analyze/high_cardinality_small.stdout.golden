@@ -1,0 +1,8 @@
+DataPack Analysis: high_cardinality_small.csv
+Original size:     186 bytes
+Sampled rows:      16
+Sampled bytes:     186
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+value          Plain                     16      0.0%  No strong dictionary signal; avg 8.0 bytes
+tag            Dictionary                 1     93.8%  Very low cardinality with high repetition; avg 1.0 bytes

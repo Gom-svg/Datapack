@@ -1,0 +1,9 @@
+DataPack Analysis: empty_utf8.csv
+Original size:     53 bytes
+Sampled rows:      4
+Sampled bytes:     53
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+id             DeltaCandidate             4      0.0%  Numeric/date heuristic matched; avg 1.0 bytes
+city           Dictionary                 2     50.0%  Repeated values likely benefit from dictionary IDs; avg 4.5 bytes
+note           Dictionary                 2     50.0%  Repeated values likely benefit from dictionary IDs; avg 1.5 bytes

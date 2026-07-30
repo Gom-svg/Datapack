@@ -1,0 +1,9 @@
+DataPack Analysis: simple_header_lf.csv
+Original size:     60 bytes
+Sampled rows:      3
+Sampled bytes:     60
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+id             DeltaCandidate             3      0.0%  Numeric/date heuristic matched; avg 1.0 bytes
+name           Plain                      3      0.0%  No strong dictionary signal; avg 4.3 bytes
+status         Dictionary                 2     33.3%  Repeated values likely benefit from dictionary IDs; avg 6.7 bytes

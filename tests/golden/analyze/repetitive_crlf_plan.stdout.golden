@@ -1,0 +1,14 @@
+DataPack Analysis: repetitive_crlf_plan.csv
+Original size:     98 bytes
+Sampled rows:      4
+Sampled bytes:     98
+Archive mode:        CsvColumnarDictionary
+Estimated savings:   57.5%
+Estimated memory:    0.0 MB
+Planning time:       <normalized> ms
+Reason:              High repetition detected in 2/2 columns.
+
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+code           Dictionary                 1     75.0%  Very low cardinality with high repetition; avg 2.0 bytes
+message        Dictionary                 1     75.0%  Very low cardinality with high repetition; avg 16.0 bytes

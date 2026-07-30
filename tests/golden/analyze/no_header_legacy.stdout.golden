@@ -1,0 +1,8 @@
+DataPack Analysis: no_header_legacy.csv
+Original size:     22 bytes
+Sampled rows:      2
+Sampled bytes:     22
+Column         Strategy          Unique est  Rep rate  Reason
+-------------- --------------- ------------ ---------  ------------------------
+1              DeltaCandidate             2      0.0%  Numeric/date heuristic matched; avg 1.0 bytes
+Ada            Plain                      2      0.0%  No strong dictionary signal; avg 5.0 bytes
