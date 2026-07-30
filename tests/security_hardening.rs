@@ -541,7 +541,9 @@ fn truncate_at_payload_midpoint_clean_error() {
 fn cli_truncated_archive_fails_without_committing_output() {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut archive = make_v2_bytes(&directory, b"CLI payload truncation", 1024);
-    archive.pop().expect("generated archive contains payload bytes");
+    archive
+        .pop()
+        .expect("generated archive contains payload bytes");
     let archive_path = write_archive(&directory, "truncated.dpack", &archive);
     let output = directory.path().join("truncated.out");
 
