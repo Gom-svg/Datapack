@@ -3,8 +3,9 @@ use std::fs;
 use sha2::{Digest, Sha256};
 
 use super::*;
+use crate::analysis;
 use crate::error::DatapackError;
-use crate::formats::csv::columnar;
+use crate::formats::csv::{self, columnar};
 use crate::generation::{self, Profile};
 use crate::metadata::{FileType, PayloadKind};
 use crate::storage;
@@ -476,4 +477,213 @@ fn plan_10_roundtrip_sha256_matches_disk_hash() {
     let restored = storage::restore_archive(&archive).unwrap();
 
     assert_eq!(Sha256::digest(&bytes), Sha256::digest(&restored));
+}
+
+#[test]
+fn legacy_headerless_analysis_routes_remain_explicitly_divergent() {
+    let bytes = b"1,Ada,active\r\n2,Grace,active\r\n";
+    let (_temp, path) = write_case("headerless.csv", bytes);
+
+    let planner = analyze_path(&path, 64).unwrap();
+    assert_eq!(planner.sampled_rows, 1);
+    assert_eq!(
+        planner
+            .columns
+            .iter()
+            .map(|column| column.column_name.as_str())
+            .collect::<Vec<_>>(),
+        ["1", "Ada", "active"]
+    );
+
+    let public = analysis::analyze_bytes(std::path::Path::new("headerless.csv"), bytes);
+    let public_csv = public.csv.expect("public CSV analysis");
+    assert!(!public_csv.has_headers);
+    assert_eq!(public_csv.total_rows, 2);
+    assert_eq!(
+        public_csv
+            .columns
+            .iter()
+            .map(|column| column.column_name.as_str())
+            .collect::<Vec<_>>(),
+        ["column_1", "column_2", "column_3"]
+    );
+
+    assert_eq!(
+        columnar::CsvSafetyScanner::scan(bytes, b','),
+        columnar::CsvSafety::Simple
+    );
+    let encoded = columnar::encode(bytes).unwrap().unwrap();
+    assert_eq!(columnar::decode(&encoded).unwrap(), bytes);
+}
+
+#[test]
+fn legacy_multiline_record_is_rejected_by_planner_but_accepted_by_codec() {
+    let mut bytes = b"id,note\r\n1,\"".to_vec();
+    bytes.extend(std::iter::repeat_n(b'x', 64 * 1024));
+    bytes.extend_from_slice(b"\ncontinued\"\r\n2,plain\r\n");
+    let (_temp, path) = write_case("multiline.csv", &bytes);
+
+    let error = analyze_path(&path, 64).unwrap_err();
+    assert!(
+        matches!(error, DatapackError::InvalidCsv(ref reason) if reason == "unterminated quoted field")
+    );
+
+    let public = analysis::analyze_bytes(std::path::Path::new("multiline.csv"), &bytes);
+    let public_csv = public.csv.expect("public CSV analysis");
+    assert!(public_csv.has_headers);
+    assert_eq!(public_csv.total_rows, 3);
+    assert_eq!(public_csv.columns.len(), 2);
+
+    assert_eq!(
+        columnar::CsvSafetyScanner::scan(&bytes, b','),
+        columnar::CsvSafety::RequiresRfc4180
+    );
+    let encoded = columnar::encode(&bytes)
+        .unwrap()
+        .expect("codec accepts one logical multiline record");
+    assert_eq!(columnar::decode(&encoded).unwrap(), bytes);
+}
+
+#[test]
+fn legacy_inconsistent_width_fallback_boundary_is_frozen() {
+    let bytes = b"a,b\r\n1,2\r\n3\r\n";
+    let (_temp, path) = write_case("inconsistent.csv", bytes);
+
+    assert!(matches!(
+        analyze_path(&path, 64),
+        Err(DatapackError::InvalidCsv(_))
+    ));
+
+    let public = analysis::analyze_bytes(std::path::Path::new("inconsistent.csv"), bytes);
+    let public_csv = public.csv.expect("public CSV analysis");
+    assert!(public_csv.has_headers);
+    assert_eq!(public_csv.total_rows, 2);
+    assert_eq!(public_csv.columns.len(), 2);
+
+    assert_eq!(
+        columnar::CsvSafetyScanner::scan(bytes, b','),
+        columnar::CsvSafety::Unsupported("csv column count is not stable".to_string())
+    );
+    assert!(columnar::encode(bytes)
+        .unwrap_err()
+        .to_string()
+        .contains("column count is not stable"));
+    let (candidate, reason) =
+        storage::encode_columnar_dictionary_archive_detailed(&path, bytes).unwrap();
+    assert!(candidate.is_none());
+    assert!(reason
+        .expect("columnar fallback diagnostic")
+        .contains("column count is not stable"));
+
+    let raw = storage::encode_raw_zstd_archive(&path, bytes).unwrap();
+    let archive = storage::decode_archive(&raw).unwrap();
+    assert_eq!(storage::restore_archive(&archive).unwrap(), bytes);
+}
+
+#[test]
+fn oversized_header_documents_nominal_not_hard_sample_limit() {
+    let header_value = "x".repeat(32 * 1024);
+    let input = format!("left,{header_value}\n1,value\n");
+    let (_temp, path) = write_case("large-header.csv", input.as_bytes());
+
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 64,
+        max_rows: 10,
+    })
+    .analyze_path(&path)
+    .unwrap();
+    assert_eq!(analysis.sampled_rows, 0);
+    assert_eq!(analysis.columns.len(), 2);
+    assert_eq!(analysis.columns[0].column_name, "left");
+    assert_eq!(analysis.columns[1].column_name.len(), 32 * 1024);
+    assert_eq!(analysis.sampled_bytes, 32_774);
+    assert!(analysis.sampled_bytes > 64);
+    assert_eq!(analysis.total_file_size, input.len() as u64);
+}
+
+#[test]
+fn oversized_record_without_terminator_exceeds_sample_budget() {
+    let value = "x".repeat(32 * 1024);
+    let input = format!("a,b\n1,{value}");
+    let (_temp, path) = write_case("unterminated-record.csv", input.as_bytes());
+
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 64,
+        max_rows: 10,
+    })
+    .analyze_path(&path)
+    .unwrap();
+    assert_eq!(analysis.sampled_rows, 1);
+    assert_eq!(analysis.sampled_bytes, input.len() as u64);
+    assert!(analysis.sampled_bytes > 64);
+
+    assert_eq!(
+        columnar::CsvSafetyScanner::scan(input.as_bytes(), b','),
+        columnar::CsvSafety::Simple
+    );
+    let encoded = columnar::encode(input.as_bytes()).unwrap().unwrap();
+    assert_eq!(columnar::decode(&encoded).unwrap(), input.as_bytes());
+}
+
+#[test]
+fn extremely_wide_small_input_remains_index_separated() {
+    const WIDTH: usize = 1_024;
+    let header = (0..WIDTH)
+        .map(|index| format!("c{index}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let row = std::iter::repeat_n("v", WIDTH)
+        .collect::<Vec<_>>()
+        .join(",");
+    let input = format!("{header}\n{row}\n");
+    let (_temp, path) = write_case("wide.csv", input.as_bytes());
+
+    let analysis = analyze_path(&path, 1).unwrap();
+    assert_eq!(analysis.sampled_rows, 1);
+    assert_eq!(analysis.sampled_bytes, input.len() as u64);
+    assert_eq!(analysis.columns.len(), WIDTH);
+    assert_eq!(analysis.plan.columns.len(), WIDTH);
+    assert_eq!(analysis.columns[0].column_name, "c0");
+    assert_eq!(analysis.columns[WIDTH - 1].column_name, "c1023");
+    assert!(analysis.columns.iter().all(|column| {
+        column.unique_count == 1 && column.recommended_strategy == ColumnStrategy::Plain
+    }));
+    assert_eq!(analysis.plan.archive_mode, ArchiveMode::RawZstd);
+}
+
+#[test]
+fn ambiguous_delimiter_routes_remain_explicitly_divergent() {
+    let bytes = b"a,b|c\n1,2|3\n";
+    let (_temp, path) = write_case("ambiguous.csv", bytes);
+
+    let planner = analyze_path(&path, 64).unwrap();
+    assert_eq!(
+        planner
+            .columns
+            .iter()
+            .map(|column| column.column_name.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b|c"]
+    );
+
+    let text = std::str::from_utf8(bytes).unwrap();
+    assert_eq!(csv::detect_delimiter(text), '|');
+    let public = analysis::analyze_bytes(std::path::Path::new("ambiguous.csv"), bytes);
+    let public_csv = public.csv.expect("public CSV analysis");
+    assert_eq!(public_csv.delimiter, '|');
+    assert_eq!(
+        public_csv
+            .columns
+            .iter()
+            .map(|column| column.column_name.as_str())
+            .collect::<Vec<_>>(),
+        ["a,b", "c"]
+    );
+
+    assert_eq!(
+        columnar::CsvSafetyScanner::scan(bytes, b'|'),
+        columnar::CsvSafety::Simple
+    );
+    let encoded = columnar::encode(bytes).unwrap().unwrap();
+    assert_eq!(columnar::decode(&encoded).unwrap(), bytes);
 }
