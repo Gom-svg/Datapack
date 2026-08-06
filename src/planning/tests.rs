@@ -590,7 +590,7 @@ fn legacy_inconsistent_width_fallback_boundary_is_frozen() {
 }
 
 #[test]
-fn oversized_header_documents_nominal_not_hard_sample_limit() {
+fn oversized_header_is_strictly_bounded_by_sample_limit() {
     let header_value = "x".repeat(32 * 1024);
     let input = format!("left,{header_value}\n1,value\n");
     let (_temp, path) = write_case("large-header.csv", input.as_bytes());
@@ -602,23 +602,27 @@ fn oversized_header_documents_nominal_not_hard_sample_limit() {
     .analyze_path(&path)
     .unwrap();
     assert_eq!(analysis.facts.coverage.sampled_records, 0);
-    assert_eq!(analysis.columns.len(), 2);
-    assert_eq!(analysis.columns[0].column_name, "left");
-    assert_eq!(analysis.columns[1].column_name.len(), 32 * 1024);
-    assert_eq!(analysis.facts.coverage.bytes_read, 32_774);
-    assert!(analysis.facts.coverage.bytes_read > 64);
+    assert!(analysis.columns.is_empty());
+    assert_eq!(analysis.facts.observed_column_count, None);
+    assert_eq!(analysis.facts.coverage.bytes_read, 64);
     assert_eq!(analysis.facts.source_size_bytes, input.len() as u64);
-    assert_eq!(analysis.facts.coverage.bytes_analyzed, 32_774);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, 0);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::ByteLimit
+    );
     assert_eq!(analysis.facts.coverage.final_newline, None);
-    assert!(analysis.facts.columns.iter().all(|column| {
-        column.observed_values == 0
-            && column.min_value_len_bytes.is_none()
-            && column.max_value_len_bytes.is_none()
-    }));
+    assert_eq!(analysis.facts.limitations.len(), 1);
+    assert_eq!(
+        analysis.facts.limitations[0].code(),
+        "INCOMPLETE_HEADER_SAMPLE"
+    );
+    assert!(analysis.requires_raw_fallback());
+    assert_eq!(analysis.plan.archive_mode, ArchiveMode::RawZstd);
 }
 
 #[test]
-fn oversized_record_without_terminator_exceeds_sample_budget() {
+fn unterminated_record_is_strictly_bounded_by_sample_limit() {
     let value = "x".repeat(32 * 1024);
     let input = format!("a,b\n1,{value}");
     let (_temp, path) = write_case("unterminated-record.csv", input.as_bytes());
@@ -629,9 +633,15 @@ fn oversized_record_without_terminator_exceeds_sample_budget() {
     })
     .analyze_path(&path)
     .unwrap();
-    assert_eq!(analysis.facts.coverage.sampled_records, 1);
-    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
-    assert!(analysis.facts.coverage.bytes_read > 64);
+    assert_eq!(analysis.facts.coverage.sampled_records, 0);
+    assert_eq!(analysis.facts.coverage.bytes_read, 64);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, 4);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::ByteLimit
+    );
+    assert!(analysis.facts.limitations.is_empty());
+    assert!(!analysis.requires_raw_fallback());
 
     assert_eq!(
         columnar::CsvSafetyScanner::scan(input.as_bytes(), b','),
@@ -639,6 +649,235 @@ fn oversized_record_without_terminator_exceeds_sample_budget() {
     );
     let encoded = columnar::encode(input.as_bytes()).unwrap().unwrap();
     assert_eq!(columnar::decode(&encoded).unwrap(), input.as_bytes());
+}
+
+#[test]
+fn header_record_column_and_memory_limits_are_typed_safe_fallbacks() {
+    let cases = [
+        (
+            "header-limit.csv",
+            b"left,right-hand-header\n1,2\n".as_slice(),
+            AnalysisLimits {
+                max_header_bytes: 8,
+                max_record_bytes: 64,
+                max_columns: 8,
+                max_global_cardinality_entries: 32,
+                max_analysis_memory_bytes: 4096,
+            },
+            analysis::AnalysisStopReason::HeaderByteLimit,
+            "HEADER_BYTE_LIMIT_REACHED",
+        ),
+        (
+            "record-limit-hard.csv",
+            b"a,b\n1,a-record-that-is-too-long\n".as_slice(),
+            AnalysisLimits {
+                max_header_bytes: 64,
+                max_record_bytes: 8,
+                max_columns: 8,
+                max_global_cardinality_entries: 32,
+                max_analysis_memory_bytes: 4096,
+            },
+            analysis::AnalysisStopReason::RecordByteLimit,
+            "RECORD_BYTE_LIMIT_REACHED",
+        ),
+        (
+            "column-limit.csv",
+            b"a,b,c\n1,2,3\n".as_slice(),
+            AnalysisLimits {
+                max_header_bytes: 64,
+                max_record_bytes: 64,
+                max_columns: 2,
+                max_global_cardinality_entries: 32,
+                max_analysis_memory_bytes: 4096,
+            },
+            analysis::AnalysisStopReason::ColumnLimit,
+            "COLUMN_LIMIT_REACHED",
+        ),
+        (
+            "memory-limit.csv",
+            b"a,b\n1,2\n".as_slice(),
+            AnalysisLimits {
+                max_header_bytes: 64,
+                max_record_bytes: 64,
+                max_columns: 8,
+                max_global_cardinality_entries: 32,
+                max_analysis_memory_bytes: 1,
+            },
+            analysis::AnalysisStopReason::MemoryLimit,
+            "ANALYSIS_MEMORY_LIMIT_REACHED",
+        ),
+    ];
+
+    for (name, input, limits, expected_stop, expected_code) in cases {
+        let (_temp, path) = write_case(name, input);
+        let analysis = SampleAnalyzer::new(SampleConfig {
+            max_bytes: 1024,
+            max_rows: 10,
+        })
+        .with_limits(limits)
+        .analyze_path(&path)
+        .unwrap();
+
+        assert_eq!(analysis.facts.coverage.stop_reason, expected_stop);
+        assert_eq!(analysis.facts.limitations.len(), 1);
+        assert_eq!(analysis.facts.limitations[0].code(), expected_code);
+        assert!(analysis.requires_raw_fallback());
+        assert_eq!(analysis.plan.archive_mode, ArchiveMode::RawZstd);
+    }
+}
+
+#[test]
+fn exact_record_limit_accepts_an_unterminated_record_at_eof() {
+    let input = b"a,b\n1,12345";
+    let (_temp, path) = write_case("exact-record-limit.csv", input);
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 1024,
+        max_rows: 10,
+    })
+    .with_limits(AnalysisLimits {
+        max_header_bytes: 64,
+        max_record_bytes: 7,
+        max_columns: 8,
+        max_global_cardinality_entries: 32,
+        max_analysis_memory_bytes: 4096,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::Complete
+    );
+    assert!(analysis.facts.limitations.is_empty());
+}
+
+#[test]
+fn record_limit_wins_an_exact_tie_with_the_remaining_sample_budget() {
+    let input = b"a,b\n1,1234567";
+    let (_temp, path) = write_case("record-sample-tie.csv", input);
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 12,
+        max_rows: 10,
+    })
+    .with_limits(AnalysisLimits {
+        max_header_bytes: 64,
+        max_record_bytes: 8,
+        max_columns: 8,
+        max_global_cardinality_entries: 32,
+        max_analysis_memory_bytes: 4096,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(analysis.facts.coverage.bytes_read, 12);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::RecordByteLimit
+    );
+    assert_eq!(
+        analysis.facts.limitations[0].code(),
+        "RECORD_BYTE_LIMIT_REACHED"
+    );
+}
+
+#[test]
+fn newline_at_the_exact_header_record_and_sample_caps_is_accepted() {
+    let input = b"a,b\n1,123\n";
+    let (_temp, path) = write_case("exact-newline-caps.csv", input);
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 10,
+        max_rows: 10,
+    })
+    .with_limits(AnalysisLimits {
+        max_header_bytes: 4,
+        max_record_bytes: 6,
+        max_columns: 8,
+        max_global_cardinality_entries: 32,
+        max_analysis_memory_bytes: 4096,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::Complete
+    );
+    assert!(analysis.facts.limitations.is_empty());
+}
+
+#[test]
+fn shared_cardinality_budget_censors_without_unbounded_growth() {
+    let input = b"a,b\nx,y\nx,y\n";
+    let (_temp, path) = write_case("cardinality-budget.csv", input);
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 1024,
+        max_rows: 10,
+    })
+    .with_limits(AnalysisLimits {
+        max_header_bytes: 64,
+        max_record_bytes: 64,
+        max_columns: 8,
+        max_global_cardinality_entries: 1,
+        max_analysis_memory_bytes: 4096,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::Complete
+    );
+    assert_eq!(analysis.facts.limitations.len(), 1);
+    assert_eq!(
+        analysis.facts.limitations[0].code(),
+        "CARDINALITY_MEMORY_LIMIT_REACHED"
+    );
+    assert!(analysis.facts.columns.iter().any(|column| matches!(
+        column.cardinality,
+        analysis::CardinalityEstimate::AtLeast(_)
+    )));
+    assert!(analysis.requires_raw_fallback());
+}
+
+#[test]
+fn planner_size_aggregation_saturates_instead_of_panicking() {
+    let columns = vec![
+        ColumnProfile {
+            column_index: 0,
+            column_name: "left".to_string(),
+            unique_count: 1,
+            repetition_rate: 0.0,
+            avg_value_len_bytes: 1.0,
+            estimated_dict_size_kb: 0,
+            estimated_encoded_size: u64::MAX,
+            estimated_raw_size: u64::MAX,
+            recommended_strategy: ColumnStrategy::Raw,
+            reason: "No strong dictionary signal".to_string(),
+            exceeded_cardinality: false,
+        },
+        ColumnProfile {
+            column_index: 1,
+            column_name: "right".to_string(),
+            unique_count: 1,
+            repetition_rate: 0.0,
+            avg_value_len_bytes: 1.0,
+            estimated_dict_size_kb: 0,
+            estimated_encoded_size: u64::MAX,
+            estimated_raw_size: u64::MAX,
+            recommended_strategy: ColumnStrategy::Raw,
+            reason: "No strong dictionary signal".to_string(),
+            exceeded_cardinality: false,
+        },
+    ];
+
+    let plan = PlannerPolicyV1::plan(&columns, 0);
+    assert_eq!(plan.archive_mode, ArchiveMode::RawZstd);
+    assert_eq!(plan.estimated_savings_percent, 0.0);
 }
 
 #[test]
@@ -745,9 +984,9 @@ fn dataset_facts_capture_physical_metrics_and_name_diagnostics() {
 }
 
 #[test]
-fn coverage_distinguishes_discarded_overshoot_from_analyzed_bytes() {
+fn coverage_distinguishes_bounded_fragment_from_analyzed_bytes() {
     let input = format!("a,b\n1,x\n2,{}\n", "y".repeat(1024));
-    let (_temp, path) = write_case("discarded-overshoot.csv", input.as_bytes());
+    let (_temp, path) = write_case("bounded-fragment.csv", input.as_bytes());
 
     let analysis = SampleAnalyzer::new(SampleConfig {
         max_bytes: 16,
@@ -757,7 +996,7 @@ fn coverage_distinguishes_discarded_overshoot_from_analyzed_bytes() {
     .unwrap();
 
     assert_eq!(analysis.facts.coverage.sampled_records, 1);
-    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_read, 16);
     assert_eq!(analysis.facts.source_size_bytes, input.len() as u64);
     assert_eq!(analysis.facts.coverage.bytes_analyzed, 8);
     assert_eq!(

@@ -230,7 +230,7 @@ fn record_limited_sampling_is_partial_and_diagnostic() {
 }
 
 #[test]
-fn byte_limited_sampling_distinguishes_read_overshoot_from_analyzed_bytes() {
+fn byte_limited_sampling_strictly_bounds_read_bytes() {
     let directory = tempfile::tempdir().expect("create byte-limited JSON directory");
     let input_path = directory.path().join("byte-limited.csv");
     let mut input = String::from("left,right\nA,B\nC,");
@@ -253,7 +253,7 @@ fn byte_limited_sampling_distinguishes_read_overshoot_from_analyzed_bytes() {
     let configured_max_bytes = sampling["configured_max_bytes"]
         .as_u64()
         .expect("configured_max_bytes is u64");
-    assert!(bytes_read > configured_max_bytes);
+    assert_eq!(bytes_read, configured_max_bytes);
     assert!(bytes_analyzed < bytes_read);
     assert_eq!(sampling["records_analyzed"], 1);
     assert!(sampling["final_newline"].is_null());
