@@ -184,6 +184,31 @@ pub struct V2ArchiveLimits {
     pub max_memory_bytes: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum V2ValidationStage {
+    ChunkPayload,
+    ChunkLength,
+    ChunkHash,
+    RestoredTotal,
+    GlobalHash,
+}
+
+#[derive(Debug)]
+pub(crate) struct V2ValidationError {
+    pub(crate) stage: V2ValidationStage,
+    pub(crate) source: DatapackError,
+}
+
+impl V2ValidationError {
+    fn new(stage: V2ValidationStage, source: DatapackError) -> Self {
+        Self { stage, source }
+    }
+
+    pub(crate) fn into_datapack_error(self) -> DatapackError {
+        self.source
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkedArchiveInfo {
     pub original_size_bytes: u64,
@@ -1016,6 +1041,166 @@ pub fn decode_raw_zstd_chunked_file(
             ..ChunkedProfile::default()
         },
     })
+}
+
+/// Validates every format-provided integrity guarantee of a v2 archive without
+/// creating a restored output or a temporary file.
+///
+/// `archive_info` must come from `read_v2_archive_info_with_limits` on the same
+/// reader. Payload memory is then bounded to one declared compressed chunk plus
+/// its declared restored size at a time.
+pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
+    input: &mut R,
+    archive_info: &ChunkedArchiveInfo,
+) -> std::result::Result<(), V2ValidationError> {
+    let mut global_hasher = Sha256::new();
+    let mut restored_size = 0u64;
+
+    for chunk in &archive_info.chunks {
+        if chunk.compression_mode != RAW_ZSTD_MODE {
+            return Err(V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                DatapackError::InvalidFormat(format!(
+                    "unsupported v2 chunk compression mode {}",
+                    chunk.compression_mode
+                )),
+            ));
+        }
+
+        input
+            .seek(SeekFrom::Start(chunk.compressed_offset))
+            .map_err(|error| {
+                V2ValidationError::new(V2ValidationStage::ChunkPayload, error.into())
+            })?;
+        let compressed_size = usize::try_from(chunk.compressed_size).map_err(|_| {
+            V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                DatapackError::InvalidFormat(format!(
+                    "compressed payload for chunk {} is too large for this platform",
+                    chunk.chunk_id
+                )),
+            )
+        })?;
+        let mut compressed = Vec::new();
+        compressed.try_reserve_exact(compressed_size).map_err(|_| {
+            V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                DatapackError::InvalidFormat(format!(
+                    "compressed payload for chunk {} cannot be allocated safely",
+                    chunk.chunk_id
+                )),
+            )
+        })?;
+        compressed.resize(compressed_size, 0);
+        if let Err(error) = input.read_exact(&mut compressed) {
+            if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                return Err(V2ValidationError::new(
+                    V2ValidationStage::ChunkPayload,
+                    DatapackError::InvalidFormat(format!(
+                        "compressed payload for chunk {} is truncated",
+                        chunk.chunk_id
+                    )),
+                ));
+            }
+            return Err(V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                error.into(),
+            ));
+        }
+
+        let restored_limit = usize::try_from(chunk.original_size).map_err(|_| {
+            V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                DatapackError::InvalidFormat(format!(
+                    "declared original size for chunk {} exceeds platform capacity",
+                    chunk.chunk_id
+                )),
+            )
+        })?;
+        let restored =
+            zstd_backend::decompress_with_limit(&compressed, restored_limit).map_err(|error| {
+                let stage = if error
+                    .to_string()
+                    .contains("decompressed output exceeds configured limit")
+                {
+                    V2ValidationStage::ChunkLength
+                } else {
+                    V2ValidationStage::ChunkPayload
+                };
+                V2ValidationError::new(
+                    stage,
+                    DatapackError::InvalidFormat(format!(
+                        "zstd decompression failed for chunk {}: {error}",
+                        chunk.chunk_id
+                    )),
+                )
+            })?;
+        let restored_len = u64::try_from(restored.len()).map_err(|_| {
+            V2ValidationError::new(
+                V2ValidationStage::ChunkPayload,
+                DatapackError::InvalidFormat(format!(
+                    "decompressed size for chunk {} exceeds u64 capacity",
+                    chunk.chunk_id
+                )),
+            )
+        })?;
+        if restored_len != chunk.original_size {
+            return Err(V2ValidationError::new(
+                V2ValidationStage::ChunkLength,
+                DatapackError::InvalidFormat(format!(
+                    "decompressed size mismatch for chunk {}: expected {}, got {}",
+                    chunk.chunk_id,
+                    chunk.original_size,
+                    restored.len()
+                )),
+            ));
+        }
+
+        let chunk_hash: [u8; 32] = Sha256::digest(&restored).into();
+        if chunk_hash != chunk.chunk_sha256 {
+            return Err(V2ValidationError::new(
+                V2ValidationStage::ChunkHash,
+                DatapackError::InvalidFormat(format!(
+                    "chunk {} SHA-256 mismatch: expected {}, got {}",
+                    chunk.chunk_id,
+                    hex_digest(&chunk.chunk_sha256),
+                    hex_digest(&chunk_hash)
+                )),
+            ));
+        }
+        global_hasher.update(&restored);
+        restored_size = restored_size.checked_add(restored_len).ok_or_else(|| {
+            V2ValidationError::new(
+                V2ValidationStage::RestoredTotal,
+                DatapackError::InvalidFormat(
+                    "restored output size overflowed u64 during validation".to_string(),
+                ),
+            )
+        })?;
+    }
+
+    if restored_size != archive_info.original_size_bytes {
+        return Err(V2ValidationError::new(
+            V2ValidationStage::RestoredTotal,
+            DatapackError::InvalidFormat(format!(
+                "restored size {restored_size} does not match original size {}",
+                archive_info.original_size_bytes
+            )),
+        ));
+    }
+    let global_hash: [u8; 32] = global_hasher.finalize().into();
+    if global_hash != archive_info.global_sha256 {
+        return Err(V2ValidationError::new(
+            V2ValidationStage::GlobalHash,
+            DatapackError::InvalidFormat(format!(
+                "global SHA-256 mismatch: expected {}, got {}",
+                hex_digest(&archive_info.global_sha256),
+                hex_digest(&global_hash)
+            )),
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn read_v2_archive_info<R: Read + Seek>(reader: &mut R) -> Result<ChunkedArchiveInfo> {

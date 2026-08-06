@@ -12,7 +12,7 @@ pub mod chunked;
 pub mod output;
 
 pub const MAGIC: &[u8; 5] = b"DPACK";
-const V1_FIXED_HEADER_LEN: usize = 5 + 2 + 1 + 8;
+pub(crate) const V1_FIXED_HEADER_LEN: usize = 5 + 2 + 1 + 8;
 /// V1 metadata is descriptive and should remain small even for large inputs.
 /// This generous ceiling prevents an archive-controlled allocation while
 /// retaining compatibility with metadata-rich legacy archives.
@@ -277,6 +277,13 @@ pub fn archive_version_from_path(path: &std::path::Path) -> Result<u16> {
 }
 
 pub fn read_v1_archive_header<R: Read>(reader: &mut R) -> Result<DpackMetadata> {
+    read_v1_archive_header_with_memory_limit(reader, None)
+}
+
+pub(crate) fn read_v1_archive_header_with_memory_limit<R: Read>(
+    reader: &mut R,
+    max_memory_bytes: Option<u64>,
+) -> Result<DpackMetadata> {
     let mut header = [0u8; V1_FIXED_HEADER_LEN];
     reader.read_exact(&mut header)?;
     validate_magic(&header)?;
@@ -303,6 +310,20 @@ pub fn read_v1_archive_header<R: Read>(reader: &mut R) -> Result<DpackMetadata> 
     })?;
     let metadata_len_u64 = read_u64_at(&header, metadata_len_offset, "metadata length")?;
     let metadata_len = validate_v1_metadata_len(metadata_len_u64)?;
+    if let Some(maximum) = max_memory_bytes {
+        let required = (V1_FIXED_HEADER_LEN as u64)
+            .checked_add(metadata_len_u64)
+            .ok_or_else(|| {
+                DatapackError::InvalidFormat(
+                    "v1 header and metadata memory estimate overflowed".to_string(),
+                )
+            })?;
+        if required > maximum {
+            return Err(DatapackError::InvalidFormat(format!(
+                "v1 header and metadata require {required} bytes, exceeding --max-memory-mb limit of {maximum} bytes"
+            )));
+        }
+    }
     let mut metadata_bytes = Vec::new();
     metadata_bytes
         .try_reserve_exact(metadata_len)

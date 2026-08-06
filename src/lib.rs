@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod analysis;
+mod archive_validation;
 pub mod cli;
 pub mod compression;
 pub mod encoding;

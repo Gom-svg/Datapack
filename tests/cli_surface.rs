@@ -18,6 +18,7 @@ fn structured_cli_surface_is_stable() {
             "decompress",
             "generate-test-data",
             "tune",
+            "validate",
         ])
     );
 
@@ -89,6 +90,32 @@ fn structured_cli_surface_is_stable() {
     );
     assert!(default_values(decompress).is_empty());
     assert!(value_enums(decompress).is_empty());
+
+    let validate = subcommand(&root, "validate");
+    assert_eq!(
+        long_flags(validate),
+        string_set(&[
+            "against",
+            "json",
+            "max-chunks",
+            "max-memory-mb",
+            "max-output-mb",
+            "pretty",
+        ])
+    );
+    assert_eq!(
+        default_values(validate),
+        string_map(&[("max-memory-mb", "512")])
+    );
+    assert!(value_enums(validate).is_empty());
+
+    let validate_pretty_without_json =
+        Cli::try_parse_from(["datapack", "validate", "archive.dpack", "--pretty"])
+            .expect_err("validate --pretty must require --json");
+    assert_eq!(
+        validate_pretty_without_json.kind(),
+        ErrorKind::MissingRequiredArgument
+    );
 
     let generate = subcommand(&root, "generate-test-data");
     assert_eq!(long_flags(generate), string_set(&["rows", "seed"]));

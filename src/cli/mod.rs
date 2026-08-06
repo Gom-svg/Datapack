@@ -18,11 +18,13 @@ mod decompress;
 mod profile;
 mod progress;
 mod tune;
+mod validate;
 mod validation;
 
 const DEFAULT_SAMPLE_MB: u64 = 64;
 const DEFAULT_MAX_DICTIONARY_VALUES: u64 = 65_535;
 const DEFAULT_MAX_DICTIONARY_MB: u64 = 64;
+const DEFAULT_VALIDATE_MAX_MEMORY_MB: u64 = 512;
 
 #[derive(Debug, Parser)]
 #[command(name = "datapack")]
@@ -123,6 +125,28 @@ enum Command {
         /// Preserve a sibling .partial file when decompression fails.
         #[arg(long)]
         keep_temp: bool,
+    },
+    /// Validate an archive without creating restored output.
+    Validate {
+        archive: PathBuf,
+        /// Compare the verified restored identity with an original source file.
+        #[arg(long)]
+        against: Option<PathBuf>,
+        /// Emit a versioned machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+        /// Pretty-print JSON output. Requires --json.
+        #[arg(long, requires = "json")]
+        pretty: bool,
+        /// Refuse archives declaring an output larger than N MiB.
+        #[arg(long)]
+        max_output_mb: Option<u64>,
+        /// Refuse v2 archives declaring more than N chunks.
+        #[arg(long)]
+        max_chunks: Option<u64>,
+        /// Bound validation working memory in MiB.
+        #[arg(long, default_value_t = DEFAULT_VALIDATE_MAX_MEMORY_MB)]
+        max_memory_mb: u64,
     },
     /// Generate deterministic fictitious CSV benchmark data.
     GenerateTestData {
@@ -333,6 +357,25 @@ pub fn run(cli: Cli) -> Result<()> {
                 keep_temp,
             },
         ),
+        Command::Validate {
+            archive,
+            against,
+            json,
+            pretty,
+            max_output_mb,
+            max_chunks,
+            max_memory_mb,
+        } => validate::run(
+            archive,
+            ValidateOptions {
+                against,
+                json,
+                pretty,
+                max_output_mb,
+                max_chunks,
+                max_memory_mb,
+            },
+        ),
         Command::GenerateTestData {
             profile,
             output,
@@ -442,6 +485,16 @@ struct DecompressOptions {
     max_memory_mb: Option<u64>,
     force: bool,
     keep_temp: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ValidateOptions {
+    against: Option<PathBuf>,
+    json: bool,
+    pretty: bool,
+    max_output_mb: Option<u64>,
+    max_chunks: Option<u64>,
+    max_memory_mb: u64,
 }
 
 impl CompressOptions {
