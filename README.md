@@ -112,7 +112,7 @@ datapack compress input.csv output.dpack --verify-best
 
 `--mode fast` follows the planner for one planned compression path. `--mode best` compares candidates when the projection is close, and `--verify-best` builds both safe candidates and keeps the smaller archive when structured analysis is eligible. A hard analysis limit or malformed/unsupported structured input overrides both modes and enters the transactional streaming RawZstd path without building a columnar candidate. The columnar encoder still validates its own reconstruction before that payload can be stored; an unsafe or unsupported candidate also falls back to RawZstd.
 
-Dictionary planning limits are controlled with `--max-dictionary-values` and `--max-dictionary-mb`. The defaults are 65,535 values and 64 MiB per column. Columns exceeding a limit switch to `Plain` in the plan.
+Dictionary planning limits are controlled with `--max-dictionary-values` and `--max-dictionary-mb`. The defaults are 65,535 values and 64 MiB of logical dictionary entries per column. Columns exceeding a sampled limit switch to `Plain` in the executable plan. The full-input DCSV01 writer enforces the same limits, including the stored header value; if later values make a planned Dictionary column exceed either limit, the structured candidate is rejected and compression falls back byte-exactly to `RawZstd`.
 
 ## Experimental Hardware Tuning
 
