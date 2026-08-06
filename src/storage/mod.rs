@@ -6,6 +6,7 @@ use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::formats::csv::columnar;
 use crate::metadata::{DpackMetadata, FileType, PayloadKind, CURRENT_VERSION};
+use crate::planning::ColumnExecutionPlan;
 
 pub mod chunked;
 pub mod output;
@@ -82,15 +83,16 @@ pub fn encode_columnar_dictionary_archive_detailed(
     )
 }
 
-pub(crate) fn encode_columnar_dictionary_archive_for_delimiter_detailed(
+pub(crate) fn encode_columnar_dictionary_archive_with_plan_detailed(
     input_path: &std::path::Path,
     original_bytes: &[u8],
     delimiter: u8,
+    execution_plan: &ColumnExecutionPlan,
 ) -> Result<(Option<Vec<u8>>, Option<String>)> {
     encode_columnar_dictionary_archive_from_payload(
         input_path,
         original_bytes,
-        columnar::encode_with_delimiter(original_bytes, delimiter),
+        columnar::encode_with_execution_plan(original_bytes, delimiter, execution_plan),
     )
 }
 

@@ -8,6 +8,7 @@ use crate::formats::delimited::{
     parse_document, DelimitedDialect, DelimitedRecord, NewlinePolicy, ObservedNewline, QuoteMode,
     ScanError, ScanLimits,
 };
+use crate::planning::{ColumnExecutionMode, ColumnExecutionPlan, DictionaryExecutionLimits};
 
 const MAGIC: &[u8; 6] = b"DCSV01";
 const MIN_SAVINGS_RATIO: f64 = 0.05;
@@ -112,12 +113,31 @@ pub fn encode(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
 }
 
 pub(crate) fn encode_with_delimiter(bytes: &[u8], delimiter: u8) -> Result<Option<Vec<u8>>> {
+    encode_internal(bytes, delimiter, None)
+}
+
+pub(crate) fn encode_with_execution_plan(
+    bytes: &[u8],
+    delimiter: u8,
+    execution_plan: &ColumnExecutionPlan,
+) -> Result<Option<Vec<u8>>> {
+    encode_internal(bytes, delimiter, Some(execution_plan))
+}
+
+fn encode_internal(
+    bytes: &[u8],
+    delimiter: u8,
+    execution_plan: Option<&ColumnExecutionPlan>,
+) -> Result<Option<Vec<u8>>> {
     if !matches!(delimiter, b',' | b';' | b'\t' | b'|') {
         return Err(DatapackError::InvalidFormat(format!(
             "unsupported csv payload delimiter byte {delimiter}"
         )));
     }
     let shape = CsvShape::parse(bytes, delimiter)?;
+    if let Some(plan) = execution_plan {
+        plan.validate_column_count(shape.column_count)?;
+    }
     let mut output = Vec::new();
 
     output.extend_from_slice(MAGIC);
@@ -127,15 +147,34 @@ pub(crate) fn encode_with_delimiter(bytes: &[u8], delimiter: u8) -> Result<Optio
         NewlineStyle::Crlf => 2,
     });
     output.push(u8::from(shape.has_final_newline));
-    write_u64(&mut output, shape.row_count as u64);
-    write_u32(&mut output, shape.column_count as u32);
+    let row_count = u64::try_from(shape.row_count).map_err(|_| {
+        DatapackError::InvalidFormat("csv row count exceeds u64 capacity".to_string())
+    })?;
+    let column_count = u32::try_from(shape.column_count).map_err(|_| {
+        DatapackError::InvalidFormat("csv column count exceeds u32 capacity".to_string())
+    })?;
+    write_u64(&mut output, row_count);
+    write_u32(&mut output, column_count);
 
     for column_index in 0..shape.column_count {
         let values = shape.column_values(column_index);
-        let plan = choose_column_mode(&values);
-        match plan {
-            ColumnMode::Plain => write_plain_column(&mut output, &values),
-            ColumnMode::Dictionary => write_dictionary_column(&mut output, &values),
+        if let Some(plan) = execution_plan {
+            match plan.mode(column_index)? {
+                ColumnExecutionMode::Plain => {
+                    write_planned_plain_column(&mut output, &values)?;
+                }
+                ColumnExecutionMode::Dictionary => write_planned_dictionary_column(
+                    &mut output,
+                    &values,
+                    plan.dictionary_limits(),
+                    column_index,
+                )?,
+            }
+        } else {
+            match choose_column_mode(&values) {
+                ColumnMode::Plain => write_plain_column(&mut output, &values),
+                ColumnMode::Dictionary => write_dictionary_column(&mut output, &values),
+            }
         }
     }
 
@@ -353,6 +392,141 @@ fn write_dictionary_column(output: &mut Vec<u8>, values: &[&[u8]]) {
             CompactIdWidth::U32 => output.extend_from_slice(&code.to_le_bytes()),
         }
     }
+}
+
+fn write_planned_plain_column(output: &mut Vec<u8>, values: &[&[u8]]) -> Result<()> {
+    output.push(0);
+    for value in values {
+        let value_len = u32::try_from(value.len()).map_err(|_| {
+            DatapackError::InvalidFormat(
+                "planned plain-column value length exceeds u32 capacity".to_string(),
+            )
+        })?;
+        write_u32(output, value_len);
+        output.extend_from_slice(value);
+    }
+    Ok(())
+}
+
+fn write_planned_dictionary_column(
+    output: &mut Vec<u8>,
+    values: &[&[u8]],
+    limits: DictionaryExecutionLimits,
+    column_index: usize,
+) -> Result<()> {
+    let capacity = values
+        .len()
+        .min(usize::try_from(limits.max_values).unwrap_or(usize::MAX));
+    let mut codes = Vec::new();
+    codes.try_reserve_exact(values.len()).map_err(|error| {
+        DatapackError::InvalidFormat(format!(
+            "cannot reserve dictionary codes for column {column_index}: {error}"
+        ))
+    })?;
+    let mut code_by_value = HashMap::<&[u8], u32>::new();
+    code_by_value.try_reserve(capacity).map_err(|error| {
+        DatapackError::InvalidFormat(format!(
+            "cannot reserve dictionary map for column {column_index}: {error}"
+        ))
+    })?;
+    let mut dictionary = Vec::<&[u8]>::new();
+    dictionary.try_reserve_exact(capacity).map_err(|error| {
+        DatapackError::InvalidFormat(format!(
+            "cannot reserve dictionary values for column {column_index}: {error}"
+        ))
+    })?;
+    let mut dictionary_bytes = 0u64;
+
+    for value in values {
+        let code = match code_by_value.get(*value) {
+            Some(code) => *code,
+            None => {
+                let next_count = u64::try_from(dictionary.len())
+                    .ok()
+                    .and_then(|count| count.checked_add(1))
+                    .ok_or_else(|| {
+                        DatapackError::InvalidFormat(format!(
+                            "dictionary value count overflowed for column {column_index}"
+                        ))
+                    })?;
+                if next_count > limits.max_values {
+                    return Err(DatapackError::InvalidFormat(format!(
+                        "column {column_index} dictionary requires more than {} values",
+                        limits.max_values
+                    )));
+                }
+                let value_bytes = u64::try_from(value.len()).map_err(|_| {
+                    DatapackError::InvalidFormat(format!(
+                        "dictionary value length exceeds u64 capacity for column {column_index}"
+                    ))
+                })?;
+                let entry_bytes = value_bytes.checked_add(4).ok_or_else(|| {
+                    DatapackError::InvalidFormat(format!(
+                        "dictionary byte count overflowed for column {column_index}"
+                    ))
+                })?;
+                let next_bytes = dictionary_bytes.checked_add(entry_bytes).ok_or_else(|| {
+                    DatapackError::InvalidFormat(format!(
+                        "dictionary byte count overflowed for column {column_index}"
+                    ))
+                })?;
+                if next_bytes > limits.max_bytes {
+                    return Err(DatapackError::InvalidFormat(format!(
+                        "column {column_index} dictionary requires more than {} bytes",
+                        limits.max_bytes
+                    )));
+                }
+                let code = u32::try_from(dictionary.len()).map_err(|_| {
+                    DatapackError::InvalidFormat(format!(
+                        "dictionary value count exceeds u32 capacity for column {column_index}"
+                    ))
+                })?;
+                dictionary.push(*value);
+                code_by_value.insert(*value, code);
+                dictionary_bytes = next_bytes;
+                code
+            }
+        };
+        codes.push(code);
+    }
+
+    let width = compact_id_width(dictionary.len());
+    output.push(1);
+    output.push(width.to_byte());
+    let dictionary_len = u32::try_from(dictionary.len()).map_err(|_| {
+        DatapackError::InvalidFormat(format!(
+            "dictionary value count exceeds u32 capacity for column {column_index}"
+        ))
+    })?;
+    write_u32(output, dictionary_len);
+    for value in &dictionary {
+        let value_len = u32::try_from(value.len()).map_err(|_| {
+            DatapackError::InvalidFormat(format!(
+                "dictionary value length exceeds u32 capacity for column {column_index}"
+            ))
+        })?;
+        write_u32(output, value_len);
+        output.extend_from_slice(value);
+    }
+    for code in codes {
+        match width {
+            CompactIdWidth::U8 => output.push(u8::try_from(code).map_err(|_| {
+                DatapackError::InvalidFormat(format!(
+                    "dictionary code {code} exceeds u8 capacity for column {column_index}"
+                ))
+            })?),
+            CompactIdWidth::U16 => {
+                let code = u16::try_from(code).map_err(|_| {
+                    DatapackError::InvalidFormat(format!(
+                        "dictionary code {code} exceeds u16 capacity for column {column_index}"
+                    ))
+                })?;
+                output.extend_from_slice(&code.to_le_bytes());
+            }
+            CompactIdWidth::U32 => output.extend_from_slice(&code.to_le_bytes()),
+        }
+    }
+    Ok(())
 }
 
 enum DecodedColumn<'a> {
@@ -774,6 +948,35 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning::{ArchiveMode, ColumnPlan, ColumnStrategy, CompressionPlan};
+
+    const FIRST_COLUMN_MODE_OFFSET: usize = 6 + 1 + 1 + 1 + 8 + 4;
+
+    fn execution_plan(
+        strategies: &[ColumnStrategy],
+        max_values: u64,
+        max_bytes: u64,
+    ) -> ColumnExecutionPlan {
+        let plan = CompressionPlan {
+            archive_mode: ArchiveMode::CsvColumnarDictionary,
+            columns: strategies
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(column_index, strategy)| ColumnPlan {
+                    column_index,
+                    column_name: format!("column_{column_index}"),
+                    strategy,
+                    reason: "codec execution test".to_string(),
+                })
+                .collect(),
+            estimated_savings_percent: 10.0,
+            estimated_memory_mb: 1.0,
+            planning_time_ms: 0,
+            reason: "codec execution test".to_string(),
+        };
+        ColumnExecutionPlan::with_dictionary_limit_bytes(&plan, max_values, max_bytes)
+    }
 
     #[test]
     fn compact_id_width_selection() {
@@ -1043,6 +1246,63 @@ mod tests {
 
         assert_eq!(choose_column_mode(&repeated), ColumnMode::Dictionary);
         assert_eq!(choose_column_mode(&unique), ColumnMode::Plain);
+    }
+
+    #[test]
+    fn planned_encoder_obeys_plain_and_dictionary_instead_of_replanning() {
+        let naturally_dictionary = b"value\nsame\nsame\nsame\n";
+        let automatic = encode_with_delimiter(naturally_dictionary, b',')
+            .unwrap()
+            .unwrap();
+        assert_eq!(automatic[FIRST_COLUMN_MODE_OFFSET], 1);
+        let plain_plan = execution_plan(&[ColumnStrategy::Plain], 10, 1024);
+        let forced_plain = encode_with_execution_plan(naturally_dictionary, b',', &plain_plan)
+            .unwrap()
+            .unwrap();
+        assert_eq!(forced_plain[FIRST_COLUMN_MODE_OFFSET], 0);
+        assert_eq!(decode(&forced_plain).unwrap(), naturally_dictionary);
+
+        let naturally_plain = b"value\nalpha\nbeta\ngamma\n";
+        let automatic = encode_with_delimiter(naturally_plain, b',')
+            .unwrap()
+            .unwrap();
+        assert_eq!(automatic[FIRST_COLUMN_MODE_OFFSET], 0);
+        let dictionary_plan = execution_plan(&[ColumnStrategy::Dictionary], 10, 1024);
+        let forced_dictionary = encode_with_execution_plan(naturally_plain, b',', &dictionary_plan)
+            .unwrap()
+            .unwrap();
+        assert_eq!(forced_dictionary[FIRST_COLUMN_MODE_OFFSET], 1);
+        assert_eq!(decode(&forced_dictionary).unwrap(), naturally_plain);
+    }
+
+    #[test]
+    fn planned_dictionary_limits_include_header_and_enforce_exact_boundaries() {
+        let input = b"value\nA\nB\n";
+        let exact_plan = execution_plan(&[ColumnStrategy::Dictionary], 3, 19);
+        let encoded = encode_with_execution_plan(input, b',', &exact_plan)
+            .unwrap()
+            .unwrap();
+        assert_eq!(encoded[FIRST_COLUMN_MODE_OFFSET], 1);
+        assert_eq!(decode(&encoded).unwrap(), input);
+
+        let value_limited = execution_plan(&[ColumnStrategy::Dictionary], 2, 19);
+        let error = encode_with_execution_plan(input, b',', &value_limited).unwrap_err();
+        assert!(error.to_string().contains("more than 2 values"));
+
+        let byte_limited = execution_plan(&[ColumnStrategy::Dictionary], 3, 18);
+        let error = encode_with_execution_plan(input, b',', &byte_limited).unwrap_err();
+        assert!(error.to_string().contains("more than 18 bytes"));
+    }
+
+    #[test]
+    fn planned_encoder_rejects_column_shape_mismatch() {
+        let input = b"left,right\nA,B\n";
+        let missing_column = execution_plan(&[ColumnStrategy::Plain], 10, 1024);
+        let error = encode_with_execution_plan(input, b',', &missing_column).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("plan contains 1 columns, but input contains 2"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Cursor;
 use std::process::{Command, Output};
 
+use datapack::generation::{self, Profile};
 use datapack::metadata::PayloadKind;
 use datapack::storage;
 
@@ -62,6 +63,94 @@ fn canonical_delimiter_is_propagated_past_quoted_legacy_decoys() {
         .expect("decompress routed DCSV01 payload");
     assert_eq!(&dcsv[..6], b"DCSV01");
     assert_eq!(dcsv[6], b'|');
+    assert_eq!(
+        storage::restore_archive(&archive).unwrap(),
+        input.as_bytes()
+    );
+}
+
+#[test]
+fn cli_dictionary_limits_control_default_best_and_verify_candidates() {
+    let directory = tempfile::tempdir().expect("temporary execution-limit directory");
+    let input_path = directory.path().join("repetitive.csv");
+    generation::generate_to_path(Profile::Repetitive, &input_path, 10_000, Some(42))
+        .expect("generate execution-limit corpus");
+    let input = fs::read(&input_path).expect("read execution-limit corpus");
+    let modes: [(&str, &[&str]); 3] = [
+        (
+            "default",
+            &["--max-dictionary-values", "1", "--max-dictionary-mb", "0"],
+        ),
+        (
+            "best",
+            &[
+                "--mode",
+                "best",
+                "--max-dictionary-values",
+                "1",
+                "--max-dictionary-mb",
+                "0",
+            ],
+        ),
+        (
+            "verify",
+            &[
+                "--verify-best",
+                "--max-dictionary-values",
+                "1",
+                "--max-dictionary-mb",
+                "0",
+            ],
+        ),
+    ];
+
+    for (name, arguments) in modes {
+        let archive_path = directory.path().join(format!("{name}.dpack"));
+        let output = run_compress(&input_path, &archive_path, arguments);
+        assert_success(&output);
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("switching to Plain"),
+            "{name} did not report dictionary-plan demotion"
+        );
+        let archive = storage::decode_archive(&fs::read(&archive_path).unwrap()).unwrap();
+        if name != "verify" {
+            assert_eq!(
+                archive.metadata.payload_kind,
+                PayloadKind::CsvColumnarDictionary,
+                "{name} did not execute the all-Plain structured plan"
+            );
+        }
+        if archive.metadata.payload_kind == PayloadKind::CsvColumnarDictionary {
+            let dcsv = zstd::stream::decode_all(Cursor::new(&archive.payload)).unwrap();
+            assert_eq!(
+                dcsv[21], 0,
+                "{name} re-enabled Dictionary for a planned Plain column"
+            );
+        }
+        assert_eq!(storage::restore_archive(&archive).unwrap(), input, "{name}");
+    }
+}
+
+#[test]
+fn full_input_dictionary_limit_drift_falls_back_to_raw_zstd() {
+    let directory = tempfile::tempdir().expect("temporary full-input drift directory");
+    let input_path = directory.path().join("late-unique.psv");
+    let archive_path = directory.path().join("late-unique.dpack");
+    let mut input = String::from("kind|status\n");
+    for _ in 0..10_100 {
+        input.push_str("A|open\n");
+    }
+    input.push_str("B|open\n");
+    fs::write(&input_path, input.as_bytes()).expect("write late-unique corpus");
+
+    let output = run_compress(
+        &input_path,
+        &archive_path,
+        &["--sample-mb", "1", "--max-dictionary-values", "2"],
+    );
+    assert_success(&output);
+    let archive = storage::decode_archive(&fs::read(archive_path).unwrap()).unwrap();
+    assert_eq!(archive.metadata.payload_kind, PayloadKind::RawZstd);
     assert_eq!(
         storage::restore_archive(&archive).unwrap(),
         input.as_bytes()

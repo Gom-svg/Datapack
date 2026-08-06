@@ -21,6 +21,8 @@ mod tune;
 mod validation;
 
 const DEFAULT_SAMPLE_MB: u64 = 64;
+const DEFAULT_MAX_DICTIONARY_VALUES: u64 = 65_535;
+const DEFAULT_MAX_DICTIONARY_MB: u64 = 64;
 
 #[derive(Debug, Parser)]
 #[command(name = "datapack")]
@@ -61,10 +63,10 @@ enum Command {
         #[arg(long)]
         verify_best: bool,
         /// Maximum in-memory dictionary entries per column.
-        #[arg(long, default_value_t = 65_535)]
+        #[arg(long, default_value_t = DEFAULT_MAX_DICTIONARY_VALUES)]
         max_dictionary_values: u64,
         /// Maximum estimated in-memory dictionary size per column.
-        #[arg(long, default_value_t = 64)]
+        #[arg(long, default_value_t = DEFAULT_MAX_DICTIONARY_MB)]
         max_dictionary_mb: u64,
         /// Write a v2 chunked RawZstd archive.
         #[arg(long)]

@@ -6,14 +6,16 @@ use std::time::{Duration, Instant};
 use crate::analysis;
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
-use crate::planning::ArchiveMode;
+use crate::planning::{ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
 use super::archive::encode_for_plan_detailed;
 use super::chunked_options::build_chunked_compress_options;
 use super::profile::{duration_ms, elapsed_ms, mb_per_second};
 use super::progress::{progress_phase, read_prefix_buffered_progress, IO_BUFFER_BYTES};
-use super::{BenchmarkOptions, DEFAULT_SAMPLE_MB};
+use super::{
+    BenchmarkOptions, DEFAULT_MAX_DICTIONARY_MB, DEFAULT_MAX_DICTIONARY_VALUES, DEFAULT_SAMPLE_MB,
+};
 
 mod model;
 mod report;
@@ -146,6 +148,11 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
             profile_timings,
         );
     }
+    let execution_plan = ColumnExecutionPlan::from_compression_plan(
+        &analysis.plan,
+        DEFAULT_MAX_DICTIONARY_VALUES,
+        DEFAULT_MAX_DICTIONARY_MB,
+    );
 
     let phase_started = Instant::now();
     let bytes =
@@ -200,7 +207,7 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
         eprintln!("benchmark compress run {}/{}", run_index + 1, runs_used);
         let start = Instant::now();
         let (archive, mode, error) =
-            encode_for_plan_detailed(&input, &bytes, estimated_mode, b',')?;
+            encode_for_plan_detailed(&input, &bytes, estimated_mode, b',', &execution_plan)?;
         compression_times.push(start.elapsed());
         progress_phase(
             "benchmark encode+compress",

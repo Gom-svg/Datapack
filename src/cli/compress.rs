@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::analysis;
 use crate::error::{DatapackError, Result};
-use crate::planning::{self, ArchiveMode};
+use crate::planning::{self, ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
 use super::archive::{archive_mode_for_payload, encode_best_archive, encode_for_plan};
@@ -123,6 +123,11 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     if plan.archive_mode == ArchiveMode::RawZstd && !compares_candidates {
         return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
     }
+    let execution_plan = ColumnExecutionPlan::from_compression_plan(
+        &plan,
+        options.max_dictionary_values,
+        options.max_dictionary_mb,
+    );
 
     let read_started = Instant::now();
     let bytes = read_all_buffered_progress(input, "read input")?;
@@ -130,7 +135,7 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     let phase_started = Instant::now();
     let (archive, selected_mode) = if options.verify_best {
         let (archive, selected, saved, columnar_error) =
-            encode_best_archive(input, &bytes, delimiter)?;
+            encode_best_archive(input, &bytes, delimiter, &execution_plan)?;
         eprintln!(
             "verify-best: selected {}, saved {saved} bytes over alternative.",
             selected.as_str()
@@ -140,10 +145,12 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
         }
         (archive, selected)
     } else if options.mode == CompressMode::Best && plan.estimated_savings_percent < 15.0 {
-        let (archive, selected, _, _) = encode_best_archive(input, &bytes, delimiter)?;
+        let (archive, selected, _, _) =
+            encode_best_archive(input, &bytes, delimiter, &execution_plan)?;
         (archive, selected)
     } else {
-        let archive = encode_for_plan(input, &bytes, plan.archive_mode, delimiter)?;
+        let archive =
+            encode_for_plan(input, &bytes, plan.archive_mode, delimiter, &execution_plan)?;
         let metadata = storage::read_v1_archive_header(&mut Cursor::new(&archive))?;
         (archive, archive_mode_for_payload(&metadata.payload_kind))
     };

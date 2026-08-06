@@ -9,6 +9,10 @@ use crate::error::Result;
 
 pub mod plan;
 
+mod execution;
+
+pub(crate) use execution::{ColumnExecutionMode, ColumnExecutionPlan, DictionaryExecutionLimits};
+
 #[cfg(test)]
 pub(crate) use crate::analysis::{
     AnalysisEngine as SampleAnalyzer, AnalysisLimits, DatasetAnalysis as SampleAnalysis,
