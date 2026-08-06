@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{DatapackError, Result};
 use crate::formats::csv::{detect_delimiter, NewlineStyle};
+use crate::formats::delimited::{
+    parse_document, DelimitedDialect, DelimitedRecord, NewlinePolicy, ObservedNewline, QuoteMode,
+    ScanError, ScanLimits,
+};
 
 const MAGIC: &[u8; 6] = b"DCSV01";
 const MIN_SAVINGS_RATIO: f64 = 0.05;
@@ -531,7 +535,8 @@ fn try_vec_with_capacity<T>(capacity: usize, purpose: &str) -> Result<Vec<T>> {
 }
 
 struct CsvShape<'a> {
-    rows: Vec<Vec<&'a [u8]>>,
+    bytes: &'a [u8],
+    rows: Vec<DelimitedRecord>,
     row_count: usize,
     column_count: usize,
     newline_style: NewlineStyle,
@@ -556,14 +561,15 @@ impl<'a> CsvShape<'a> {
         if rows.is_empty() {
             return Err(DatapackError::InvalidFormat("empty csv input".to_string()));
         }
-        let column_count = rows[0].len();
-        if column_count == 0 || rows.iter().any(|row| row.len() != column_count) {
+        let column_count = rows[0].fields().len();
+        if column_count == 0 || rows.iter().any(|row| row.fields().len() != column_count) {
             return Err(DatapackError::InvalidFormat(
                 "csv column count is not stable".to_string(),
             ));
         }
 
         Ok(Self {
+            bytes,
             row_count: rows.len(),
             column_count,
             rows,
@@ -573,174 +579,89 @@ impl<'a> CsvShape<'a> {
     }
 
     fn column_values(&self, column_index: usize) -> Vec<&'a [u8]> {
-        self.rows.iter().map(|row| row[column_index]).collect()
+        self.rows
+            .iter()
+            .map(|row| &self.bytes[row.fields()[column_index].clone()])
+            .collect()
     }
 }
 
-fn has_stable_columns(rows: &[Vec<&[u8]>]) -> bool {
+fn has_stable_columns(rows: &[DelimitedRecord]) -> bool {
     let Some(first) = rows.first() else {
         return false;
     };
-    !first.is_empty() && rows.iter().all(|row| row.len() == first.len())
+    !first.fields().is_empty()
+        && rows
+            .iter()
+            .all(|row| row.fields().len() == first.fields().len())
 }
 
-struct ParsedCsv<'a> {
-    rows: Vec<Vec<&'a [u8]>>,
+struct ParsedCsv {
+    rows: Vec<DelimitedRecord>,
     newline_style: NewlineStyle,
     has_final_newline: bool,
 }
 
-fn parse_simple_rows(bytes: &[u8], delimiter: u8) -> Result<ParsedCsv<'_>> {
+fn parse_simple_rows(bytes: &[u8], delimiter: u8) -> Result<ParsedCsv> {
     if bytes.contains(&b'"') {
         return Err(DatapackError::InvalidFormat(
             "simple csv path does not support quotes".to_string(),
         ));
     }
+    parse_delimited_rows(bytes, delimiter, QuoteMode::Disabled)
+}
 
-    let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut field_start = 0usize;
-    let mut index = 0usize;
-    let mut newline_style = None;
-    let mut last_was_newline = false;
+fn parse_rfc4180_rows(bytes: &[u8], delimiter: u8) -> Result<ParsedCsv> {
+    parse_delimited_rows(bytes, delimiter, QuoteMode::Dcsv01Compatible)
+}
 
-    while index < bytes.len() {
-        match bytes[index] {
-            byte if byte == delimiter => {
-                row.push(&bytes[field_start..index]);
-                index += 1;
-                field_start = index;
-                last_was_newline = false;
-            }
-            b'\r' => {
-                if bytes.get(index + 1) != Some(&b'\n') {
-                    return Err(DatapackError::InvalidFormat(
-                        "unsupported bare CR newline in csv".to_string(),
-                    ));
-                }
-                set_newline_style(&mut newline_style, NewlineStyle::Crlf)?;
-                row.push(&bytes[field_start..index]);
-                rows.push(std::mem::take(&mut row));
-                index += 2;
-                field_start = index;
-                last_was_newline = true;
-            }
-            b'\n' => {
-                set_newline_style(&mut newline_style, NewlineStyle::Lf)?;
-                row.push(&bytes[field_start..index]);
-                rows.push(std::mem::take(&mut row));
-                index += 1;
-                field_start = index;
-                last_was_newline = true;
-            }
-            _ => {
-                index += 1;
-                last_was_newline = false;
-            }
+fn parse_delimited_rows(bytes: &[u8], delimiter: u8, quote_mode: QuoteMode) -> Result<ParsedCsv> {
+    let document = parse_document(
+        bytes,
+        DelimitedDialect::new(delimiter, quote_mode, NewlinePolicy::RequireConsistent),
+        ScanLimits::resident_input(bytes.len()),
+    )
+    .map_err(map_scan_error)?;
+    let newline_style = match document.newline() {
+        ObservedNewline::None | ObservedNewline::Lf => NewlineStyle::Lf,
+        ObservedNewline::Crlf => NewlineStyle::Crlf,
+        ObservedNewline::Mixed => {
+            return Err(DatapackError::InvalidFormat(
+                "mixed csv newline styles are unsupported".to_string(),
+            ))
         }
+    };
+    let has_final_newline = document.has_final_newline();
+    let mut rows = document.into_records();
+    if rows.is_empty() {
+        // The established DCSV01 parser represents empty input as one row
+        // containing one empty field. Keep that codec-only convention out of
+        // the canonical scanner while preserving the public adapter exactly.
+        rows.try_reserve(1).map_err(|error| {
+            DatapackError::InvalidFormat(format!(
+                "cannot reserve capacity for empty csv row (1 entry): {error}"
+            ))
+        })?;
+        let mut empty_fields = try_vec_with_capacity(1, "empty csv row fields")?;
+        empty_fields.push(0..0);
+        rows.push(DelimitedRecord::from_fields(empty_fields));
     }
-
-    if !last_was_newline || field_start < bytes.len() || !row.is_empty() {
-        row.push(&bytes[field_start..]);
-        rows.push(row);
-    }
-
     Ok(ParsedCsv {
         rows,
-        newline_style: newline_style.unwrap_or(NewlineStyle::Lf),
-        has_final_newline: last_was_newline,
+        newline_style,
+        has_final_newline,
     })
 }
 
-fn parse_rfc4180_rows(bytes: &[u8], delimiter: u8) -> Result<ParsedCsv<'_>> {
-    let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut field_start = 0usize;
-    let mut index = 0usize;
-    let mut in_quotes = false;
-    let mut newline_style = None;
-    let mut last_was_newline = false;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-
-        if in_quotes {
-            if byte == b'"' {
-                if bytes.get(index + 1) == Some(&b'"') {
-                    index += 2;
-                } else {
-                    in_quotes = false;
-                    index += 1;
-                }
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-
-        if byte == b'"' && index == field_start {
-            in_quotes = true;
-            last_was_newline = false;
-            index += 1;
-        } else if byte == delimiter {
-            row.push(&bytes[field_start..index]);
-            index += 1;
-            field_start = index;
-            last_was_newline = false;
-        } else if byte == b'\r' {
-            if bytes.get(index + 1) != Some(&b'\n') {
-                return Err(DatapackError::InvalidFormat(
-                    "unsupported bare CR newline in csv".to_string(),
-                ));
-            }
-            set_newline_style(&mut newline_style, NewlineStyle::Crlf)?;
-            row.push(&bytes[field_start..index]);
-            rows.push(std::mem::take(&mut row));
-            index += 2;
-            field_start = index;
-            last_was_newline = true;
-        } else if byte == b'\n' {
-            set_newline_style(&mut newline_style, NewlineStyle::Lf)?;
-            row.push(&bytes[field_start..index]);
-            rows.push(std::mem::take(&mut row));
-            index += 1;
-            field_start = index;
-            last_was_newline = true;
-        } else {
-            last_was_newline = false;
-            index += 1;
-        }
-    }
-
-    if in_quotes {
-        return Err(DatapackError::InvalidFormat(
-            "unterminated quoted csv field".to_string(),
-        ));
-    }
-
-    if !last_was_newline || field_start < bytes.len() || !row.is_empty() {
-        row.push(&bytes[field_start..]);
-        rows.push(row);
-    }
-
-    Ok(ParsedCsv {
-        rows,
-        newline_style: newline_style.unwrap_or(NewlineStyle::Lf),
-        has_final_newline: last_was_newline,
-    })
-}
-
-fn set_newline_style(current: &mut Option<NewlineStyle>, next: NewlineStyle) -> Result<()> {
-    match current {
-        Some(current) if *current != next => Err(DatapackError::InvalidFormat(
-            "mixed csv newline styles are unsupported".to_string(),
-        )),
-        Some(_) => Ok(()),
-        None => {
-            *current = Some(next);
-            Ok(())
-        }
-    }
+fn map_scan_error(error: ScanError) -> DatapackError {
+    let reason = match error {
+        ScanError::QuoteNotAllowed => "simple csv path does not support quotes".to_string(),
+        ScanError::UnterminatedQuotedField => "unterminated quoted csv field".to_string(),
+        ScanError::BareCarriageReturn => "unsupported bare CR newline in csv".to_string(),
+        ScanError::MixedNewlines => "mixed csv newline styles are unsupported".to_string(),
+        other => other.to_string(),
+    };
+    DatapackError::InvalidFormat(reason)
 }
 
 fn write_u32(output: &mut Vec<u8>, value: u32) {
@@ -924,6 +845,123 @@ mod tests {
         let restored = decode(&encoded).unwrap();
 
         assert_eq!(restored, input);
+    }
+
+    #[test]
+    fn compatibility_adapter_round_trips_every_dcsv01_delimiter() {
+        for delimiter in [b',', b';', b'\t', b'|'] {
+            let mut input = Vec::new();
+            input.extend_from_slice(b"id");
+            input.push(delimiter);
+            input.extend_from_slice(b"note");
+            input.push(delimiter);
+            input.extend_from_slice(b"status\n1");
+            input.push(delimiter);
+            input.extend_from_slice(b"\"left");
+            input.push(delimiter);
+            input.extend_from_slice(b"right\ncontinued\"");
+            input.push(delimiter);
+            input.extend_from_slice(b"open\n2");
+            input.push(delimiter);
+            input.extend_from_slice(b"\"plain\"");
+            input.push(delimiter);
+            input.extend_from_slice(b"closed");
+
+            let text = std::str::from_utf8(&input).unwrap();
+            assert_eq!(detect_delimiter(text) as u8, delimiter);
+            assert_eq!(
+                CsvSafetyScanner::scan(&input, delimiter),
+                CsvSafety::RequiresRfc4180
+            );
+
+            let encoded = encode(&input).unwrap().unwrap();
+            assert_eq!(encoded.get(MAGIC.len()), Some(&delimiter));
+            assert_eq!(encoded.get(MAGIC.len() + 2), Some(&0));
+            assert_eq!(decode(&encoded).unwrap(), input);
+        }
+    }
+
+    #[test]
+    fn compatibility_adapter_preserves_invalid_utf8_bytes() {
+        let input = b"id,value\n1,\xff\n2,\xfe";
+        assert_eq!(CsvSafetyScanner::scan(input, b','), CsvSafety::Simple);
+
+        let encoded = encode(input).unwrap().unwrap();
+
+        assert_eq!(decode(&encoded).unwrap(), input);
+    }
+
+    #[test]
+    fn empty_input_preserves_the_legacy_single_empty_field_shape() {
+        assert_eq!(CsvSafetyScanner::scan(b"", b','), CsvSafety::Simple);
+        let parsed = parse_simple_rows(b"", b',').unwrap();
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.rows[0].fields().first(), Some(&(0..0)));
+        assert_eq!(parsed.rows[0].fields().len(), 1);
+        assert_eq!(parsed.newline_style, NewlineStyle::Lf);
+        assert!(!parsed.has_final_newline);
+
+        let encoded = encode(b"")
+            .unwrap()
+            .expect("legacy empty input remains columnar-encodable");
+        assert_eq!(decode(&encoded).unwrap(), b"");
+    }
+
+    #[test]
+    fn compatibility_adapter_preserves_permissive_quote_edges() {
+        let cases = [
+            b"id,value\n1,un\"quoted\n2,plain\n".as_slice(),
+            b"id,value\n1,\"quoted\"suffix\n2,plain\n".as_slice(),
+        ];
+
+        for input in cases {
+            assert_eq!(
+                CsvSafetyScanner::scan(input, b','),
+                CsvSafety::RequiresRfc4180
+            );
+            let encoded = encode(input).unwrap().unwrap();
+            assert_eq!(decode(&encoded).unwrap(), input);
+        }
+    }
+
+    #[test]
+    fn compatibility_adapter_preserves_legacy_error_strings() {
+        let cases = [
+            (b"a,b\r1,2".as_slice(), "unsupported bare CR newline in csv"),
+            (
+                b"a,b\n1,2\r\n".as_slice(),
+                "mixed csv newline styles are unsupported",
+            ),
+            (
+                b"a,b\n1,\"unterminated".as_slice(),
+                "unterminated quoted csv field",
+            ),
+        ];
+
+        for (input, reason) in cases {
+            assert_eq!(
+                CsvSafetyScanner::scan(input, b','),
+                CsvSafety::Unsupported(format!("invalid dpack file: {reason}"))
+            );
+            assert_eq!(
+                encode(input).unwrap_err().to_string(),
+                format!("invalid dpack file: invalid dpack file: {reason}")
+            );
+        }
+    }
+
+    #[test]
+    fn compatibility_adapter_rejects_inconsistent_widths() {
+        for input in [b"a,b\n1,2\n3\n".as_slice(), b"a,b\n1,\"2\"\n3\n".as_slice()] {
+            assert_eq!(
+                CsvSafetyScanner::scan(input, b','),
+                CsvSafety::Unsupported("csv column count is not stable".to_string())
+            );
+            assert_eq!(
+                encode(input).unwrap_err().to_string(),
+                "invalid dpack file: csv column count is not stable"
+            );
+        }
     }
 
     #[test]

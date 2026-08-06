@@ -9,6 +9,7 @@ use super::model::{
     LIMITED_RAW_FALLBACK_REASON,
 };
 use crate::error::{DatapackError, Result};
+use crate::formats::delimited::{split_legacy_physical_record, LegacySplitError};
 use crate::planning::{
     ArchiveMode, ColumnProfile, CompressionPlan, PlannerFeaturesV1, PlannerPolicyV1,
 };
@@ -597,40 +598,17 @@ fn parse_csv_record_refs<'a>(
     fields: &mut Vec<&'a str>,
     max_retained_fields: usize,
 ) -> Result<usize> {
-    fields.clear();
-    let mut chars = line.char_indices().peekable();
-    let mut field_start = 0usize;
-    let mut field_count = 0usize;
-    let mut quoted = false;
-    while let Some((index, ch)) = chars.next() {
-        match ch {
-            '"' if quoted && chars.peek().is_some_and(|(_, next)| *next == '"') => {
-                chars.next();
-            }
-            '"' => quoted = !quoted,
-            ',' if !quoted => {
-                if fields.len() < max_retained_fields {
-                    fields.push(&line[field_start..index]);
-                }
-                field_count = field_count.checked_add(1).ok_or_else(|| {
-                    DatapackError::InvalidFormat("CSV field counter overflow".to_string())
-                })?;
-                field_start = index + ch.len_utf8();
-            }
-            _ => {}
+    split_legacy_physical_record(line, fields, max_retained_fields).map_err(|error| match error {
+        LegacySplitError::UnterminatedQuotedField => {
+            DatapackError::InvalidCsv("unterminated quoted field".to_string())
         }
-    }
-    if quoted {
-        return Err(DatapackError::InvalidCsv(
-            "unterminated quoted field".to_string(),
-        ));
-    }
-    if fields.len() < max_retained_fields {
-        fields.push(&line[field_start..]);
-    }
-    field_count
-        .checked_add(1)
-        .ok_or_else(|| DatapackError::InvalidFormat("CSV field counter overflow".to_string()))
+        LegacySplitError::FieldCounterOverflow => {
+            DatapackError::InvalidFormat("CSV field counter overflow".to_string())
+        }
+        LegacySplitError::Allocation => DatapackError::InvalidFormat(
+            "cannot reserve memory for bounded CSV field references".to_string(),
+        ),
+    })
 }
 
 fn trim_quotes(value: &str) -> &str {
