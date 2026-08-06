@@ -6,13 +6,16 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand, ValueEnum};
 use sha2::{Digest, Sha256};
 
+use crate::analysis::{self, DatasetAnalysis};
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::generation::{self, Profile};
 use crate::metadata::{DpackMetadata, PayloadKind};
-use crate::planning::{self, ArchiveMode, SampleAnalysis};
+use crate::planning::{self, ArchiveMode};
 use crate::storage;
 use crate::tuning;
+
+mod analysis_report;
 
 const DEFAULT_SAMPLE_MB: u64 = 64;
 const IO_BUFFER_BYTES: usize = 256 * 1024;
@@ -491,8 +494,8 @@ struct DirectProfile<'a> {
 }
 
 fn analyze_command(input: PathBuf, include_plan: bool, sample_mb: u64) -> Result<()> {
-    let analysis = planning::analyze_path(&input, sample_mb)?;
-    print_planning_analysis(&analysis, include_plan);
+    let analysis = analysis::analyze_path(&input, sample_mb)?;
+    analysis_report::print_planning_analysis(&analysis, include_plan);
     Ok(())
 }
 
@@ -551,7 +554,7 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     }
 
     let phase_started = Instant::now();
-    let analysis = planning::analyze_path(input, options.sample_mb)?;
+    let analysis = analysis::analyze_path(input, options.sample_mb)?;
     let planning_ms = elapsed_ms(phase_started);
     let mut plan = analysis.plan.clone();
     for column in planning::apply_dictionary_limits(
@@ -1074,17 +1077,17 @@ fn validation_status(
 }
 
 fn print_estimate_only_table(
-    analysis: &SampleAnalysis,
+    analysis: &DatasetAnalysis,
     partial_reasons: &[&str],
     total_elapsed_ms: u64,
 ) {
-    let measured_input_size = analysis.sampled_bytes;
-    let input_sampled = measured_input_size < analysis.total_file_size;
+    let measured_input_size = analysis.facts.coverage.bytes_read;
+    let input_sampled = measured_input_size < analysis.facts.source_size_bytes;
     println!("{:<32} {:>18}  Description", "Metric", "Value");
     println!("{:-<32} {:-<18}  {:-<40}", "", "", "");
     println!(
         "{:<32} {:>18}  Full source file size",
-        "source_size_bytes", analysis.total_file_size
+        "source_size_bytes", analysis.facts.source_size_bytes
     );
     println!(
         "{:<32} {:>18}  Bytes inspected by the planning-only benchmark",
@@ -1138,7 +1141,7 @@ fn print_estimate_only_table(
     );
     println!(
         "{:<32} {:>18}  Sample bytes inspected by planner",
-        "planning_sample_bytes", analysis.sampled_bytes
+        "planning_sample_bytes", analysis.facts.coverage.bytes_read
     );
     println!(
         "{:<32} {:>18}  Planning time",
@@ -1198,14 +1201,17 @@ fn print_estimate_only_table(
 }
 
 fn print_estimate_only_json(
-    analysis: &SampleAnalysis,
+    analysis: &DatasetAnalysis,
     partial_reasons: &[&str],
     total_elapsed_ms: u64,
 ) {
-    let measured_input_size = analysis.sampled_bytes;
-    let input_sampled = measured_input_size < analysis.total_file_size;
+    let measured_input_size = analysis.facts.coverage.bytes_read;
+    let input_sampled = measured_input_size < analysis.facts.source_size_bytes;
     println!("{{");
-    println!("  \"source_size_bytes\": {},", analysis.total_file_size);
+    println!(
+        "  \"source_size_bytes\": {},",
+        analysis.facts.source_size_bytes
+    );
     println!("  \"measured_input_size_bytes\": {},", measured_input_size);
     println!("  \"original_size_bytes\": {},", measured_input_size);
     println!("  \"benchmark_scope\": \"estimate_only\",");
@@ -1224,7 +1230,10 @@ fn print_estimate_only_json(
         analysis.plan.archive_mode.as_str()
     );
     println!("  \"plan_was_correct\": null,");
-    println!("  \"planning_sample_bytes\": {},", analysis.sampled_bytes);
+    println!(
+        "  \"planning_sample_bytes\": {},",
+        analysis.facts.coverage.bytes_read
+    );
     println!(
         "  \"planning_time_ms\": {},",
         analysis.plan.planning_time_ms
@@ -1258,7 +1267,7 @@ fn print_estimate_only_json(
 fn benchmark_raw_zstd_streaming(
     input: PathBuf,
     options: BenchmarkOptions,
-    analysis: SampleAnalysis,
+    analysis: DatasetAnalysis,
     source_size: u64,
     benchmark_input_size: u64,
     input_sampled: bool,
@@ -1653,7 +1662,7 @@ fn benchmark_command(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
     };
 
     let phase_started = Instant::now();
-    let analysis = planning::analyze_path(&input, DEFAULT_SAMPLE_MB)?;
+    let analysis = analysis::analyze_path(&input, DEFAULT_SAMPLE_MB)?;
     profile_timings.planning_ms = Some(elapsed_ms(phase_started));
     progress_phase("planning", 0, None, phase_started);
     let estimated_mode = analysis.plan.archive_mode;
@@ -1991,55 +2000,6 @@ fn benchmark_command(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn print_planning_analysis(analysis: &SampleAnalysis, include_plan: bool) {
-    let plan = &analysis.plan;
-    println!("DataPack Analysis: {}", analysis.input_name);
-    println!("Original size:     {} bytes", analysis.total_file_size);
-    println!("Sampled rows:      {}", analysis.sampled_rows);
-    println!("Sampled bytes:     {}", analysis.sampled_bytes);
-    if include_plan {
-        println!("Archive mode:        {}", plan.archive_mode.as_str());
-        println!(
-            "Estimated savings:   {:.1}%",
-            plan.estimated_savings_percent
-        );
-        println!("Estimated memory:    {:.1} MB", plan.estimated_memory_mb);
-        println!("Planning time:       {} ms", plan.planning_time_ms);
-        println!("Reason:              {}", plan.reason);
-        println!();
-    }
-    println!(
-        "{:<14} {:<15} {:>12} {:>9}  Reason",
-        "Column", "Strategy", "Unique est", "Rep rate"
-    );
-    println!(
-        "{:-<14} {:-<15} {:-<12} {:-<9}  {:-<24}",
-        "", "", "", "", ""
-    );
-    for column in &analysis.columns {
-        let unique = if column.exceeded_cardinality {
-            ">65535".to_string()
-        } else {
-            column.unique_count.to_string()
-        };
-        println!(
-            "{:<14} {:<15} {:>12} {:>8.1}%  {}",
-            truncate_display(&column.column_name, 14),
-            column.recommended_strategy.as_str(),
-            unique,
-            column.repetition_rate * 100.0,
-            format_args!(
-                "{}; avg {:.1} bytes",
-                column.reason, column.avg_value_len_bytes
-            )
-        );
-    }
-    if include_plan && plan.archive_mode == ArchiveMode::RawZstd {
-        println!();
-        println!("Fallback to RawZstd: {}", plan.reason);
-    }
 }
 
 fn encode_for_plan(input: &std::path::Path, bytes: &[u8], mode: ArchiveMode) -> Result<Vec<u8>> {
@@ -3404,10 +3364,6 @@ fn display_optional_f64(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:.3}"))
         .unwrap_or_else(|| "unavailable".to_string())
-}
-
-fn truncate_display(value: &str, width: usize) -> String {
-    value.chars().take(width).collect()
 }
 
 fn json_escape(value: &str) -> String {

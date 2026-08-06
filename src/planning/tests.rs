@@ -38,8 +38,11 @@ fn assert_close(actual: f32, expected: f32) {
 }
 
 fn assert_raw_censored_profile(analysis: &SampleAnalysis, expected_columns: usize) {
-    assert_eq!(analysis.sampled_rows, 10_000);
-    assert_eq!(analysis.sampled_bytes, analysis.total_file_size);
+    assert_eq!(analysis.facts.coverage.sampled_records, 10_000);
+    assert_eq!(
+        analysis.facts.coverage.bytes_read,
+        analysis.facts.source_size_bytes
+    );
     assert_eq!(analysis.columns.len(), expected_columns);
     assert_eq!(analysis.plan.archive_mode, ArchiveMode::RawZstd);
     assert_close(analysis.plan.estimated_savings_percent, 0.0);
@@ -54,6 +57,12 @@ fn assert_raw_censored_profile(analysis: &SampleAnalysis, expected_columns: usiz
         assert_close(column.repetition_rate, 0.0);
         assert_eq!(column.recommended_strategy, ColumnStrategy::Raw);
         assert_eq!(column.reason, "Exceeded cardinality threshold");
+    }
+    for column in &analysis.facts.columns {
+        assert_eq!(
+            column.cardinality,
+            analysis::CardinalityEstimate::AtLeast(8_193)
+        );
     }
 }
 
@@ -87,9 +96,9 @@ fn planner_policy_v1_repetitive_profile_is_frozen() {
         analysis.plan.archive_mode,
         ArchiveMode::CsvColumnarDictionary
     );
-    assert_eq!(analysis.total_file_size, 544_597);
-    assert_eq!(analysis.sampled_bytes, 544_597);
-    assert_eq!(analysis.sampled_rows, 10_000);
+    assert_eq!(analysis.facts.source_size_bytes, 544_597);
+    assert_eq!(analysis.facts.coverage.bytes_read, 544_597);
+    assert_eq!(analysis.facts.coverage.sampled_records, 10_000);
     assert_eq!(
         analysis.plan.reason,
         "High repetition detected in 10/10 columns."
@@ -128,7 +137,7 @@ fn planner_policy_v1_random_profile_is_frozen() {
     let (_temp, path) = generate_sample(Profile::Random, 10_000, 99);
     let analysis = analyze_path(&path, 64).unwrap();
 
-    assert_eq!(analysis.total_file_size, 1_369_846);
+    assert_eq!(analysis.facts.source_size_bytes, 1_369_846);
     assert_raw_censored_profile(&analysis, 8);
 
     let bytes = fs::read(&path).unwrap();
@@ -261,9 +270,9 @@ fn planner_policy_v1_realistic_profile_is_frozen() {
     let (_temp, path) = generate_sample(Profile::Realistic, 10_000, 2026);
     let analysis = analyze_path(&path, 64).unwrap();
 
-    assert_eq!(analysis.total_file_size, 1_547_543);
-    assert_eq!(analysis.sampled_bytes, 1_547_543);
-    assert_eq!(analysis.sampled_rows, 10_000);
+    assert_eq!(analysis.facts.source_size_bytes, 1_547_543);
+    assert_eq!(analysis.facts.coverage.bytes_read, 1_547_543);
+    assert_eq!(analysis.facts.coverage.sampled_records, 10_000);
     assert_eq!(
         analysis.plan.archive_mode,
         ArchiveMode::CsvColumnarDictionary
@@ -325,7 +334,7 @@ fn planner_policy_v1_high_cardinality_profile_is_frozen() {
     let (_temp, path) = generate_sample(Profile::HighCardinality, 10_000, 7);
     let analysis = analyze_path(&path, 64).unwrap();
 
-    assert_eq!(analysis.total_file_size, 2_996_518);
+    assert_eq!(analysis.facts.source_size_bytes, 2_996_518);
     assert_raw_censored_profile(&analysis, 10);
 
     let bytes = fs::read(&path).unwrap();
@@ -343,9 +352,9 @@ fn planner_policy_v1_line_local_rfc4180_case_is_frozen() {
 
     assert_eq!(
         (
-            analysis.total_file_size,
-            analysis.sampled_bytes,
-            analysis.sampled_rows
+            analysis.facts.source_size_bytes,
+            analysis.facts.coverage.bytes_read,
+            analysis.facts.coverage.sampled_records
         ),
         (78, 78, 3)
     );
@@ -426,9 +435,9 @@ fn planner_policy_v1_unfavorable_csv_is_frozen() {
 
     assert_eq!(
         (
-            analysis.total_file_size,
-            analysis.sampled_bytes,
-            analysis.sampled_rows
+            analysis.facts.source_size_bytes,
+            analysis.facts.coverage.bytes_read,
+            analysis.facts.coverage.sampled_records
         ),
         (45, 45, 4)
     );
@@ -485,7 +494,7 @@ fn legacy_headerless_analysis_routes_remain_explicitly_divergent() {
     let (_temp, path) = write_case("headerless.csv", bytes);
 
     let planner = analyze_path(&path, 64).unwrap();
-    assert_eq!(planner.sampled_rows, 1);
+    assert_eq!(planner.facts.coverage.sampled_records, 1);
     assert_eq!(
         planner
             .columns
@@ -592,13 +601,20 @@ fn oversized_header_documents_nominal_not_hard_sample_limit() {
     })
     .analyze_path(&path)
     .unwrap();
-    assert_eq!(analysis.sampled_rows, 0);
+    assert_eq!(analysis.facts.coverage.sampled_records, 0);
     assert_eq!(analysis.columns.len(), 2);
     assert_eq!(analysis.columns[0].column_name, "left");
     assert_eq!(analysis.columns[1].column_name.len(), 32 * 1024);
-    assert_eq!(analysis.sampled_bytes, 32_774);
-    assert!(analysis.sampled_bytes > 64);
-    assert_eq!(analysis.total_file_size, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_read, 32_774);
+    assert!(analysis.facts.coverage.bytes_read > 64);
+    assert_eq!(analysis.facts.source_size_bytes, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, 32_774);
+    assert_eq!(analysis.facts.coverage.final_newline, None);
+    assert!(analysis.facts.columns.iter().all(|column| {
+        column.observed_values == 0
+            && column.min_value_len_bytes.is_none()
+            && column.max_value_len_bytes.is_none()
+    }));
 }
 
 #[test]
@@ -613,9 +629,9 @@ fn oversized_record_without_terminator_exceeds_sample_budget() {
     })
     .analyze_path(&path)
     .unwrap();
-    assert_eq!(analysis.sampled_rows, 1);
-    assert_eq!(analysis.sampled_bytes, input.len() as u64);
-    assert!(analysis.sampled_bytes > 64);
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
+    assert!(analysis.facts.coverage.bytes_read > 64);
 
     assert_eq!(
         columnar::CsvSafetyScanner::scan(input.as_bytes(), b','),
@@ -639,8 +655,8 @@ fn extremely_wide_small_input_remains_index_separated() {
     let (_temp, path) = write_case("wide.csv", input.as_bytes());
 
     let analysis = analyze_path(&path, 1).unwrap();
-    assert_eq!(analysis.sampled_rows, 1);
-    assert_eq!(analysis.sampled_bytes, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
     assert_eq!(analysis.columns.len(), WIDTH);
     assert_eq!(analysis.plan.columns.len(), WIDTH);
     assert_eq!(analysis.columns[0].column_name, "c0");
@@ -686,4 +702,116 @@ fn ambiguous_delimiter_routes_remain_explicitly_divergent() {
     );
     let encoded = columnar::encode(bytes).unwrap().unwrap();
     assert_eq!(columnar::decode(&encoded).unwrap(), bytes);
+}
+
+#[test]
+fn dataset_facts_capture_physical_metrics_and_name_diagnostics() {
+    let bytes = ",,name,name\n,,\"\",x\nxx,é,z,\"long\"\n".as_bytes();
+    let (_temp, path) = write_case("passive-facts.csv", bytes);
+
+    let analysis = analyze_path(&path, 64).unwrap();
+    let facts = &analysis.facts;
+
+    assert_eq!(facts.input_name, "passive-facts.csv");
+    assert_eq!(facts.source_size_bytes, bytes.len() as u64);
+    assert_eq!(facts.coverage.bytes_read, bytes.len() as u64);
+    assert_eq!(facts.coverage.bytes_analyzed, bytes.len() as u64);
+    assert_eq!(facts.coverage.sampled_records, 2);
+    assert_eq!(
+        facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::Complete
+    );
+    assert_eq!(facts.coverage.final_newline, Some(true));
+    assert_eq!(facts.columns.len(), 4);
+    assert!(facts.columns[0].name_status.is_empty);
+    assert_eq!(facts.columns[0].name_status.duplicate_of, None);
+    assert!(facts.columns[1].name_status.is_empty);
+    assert_eq!(facts.columns[1].name_status.duplicate_of, Some(0));
+    assert!(!facts.columns[2].name_status.is_empty);
+    assert_eq!(facts.columns[2].name_status.duplicate_of, None);
+    assert_eq!(facts.columns[3].name_status.duplicate_of, Some(2));
+
+    assert_eq!(facts.columns[0].empty_values, 1);
+    assert_eq!(facts.columns[0].min_value_len_bytes, Some(0));
+    assert_eq!(facts.columns[0].max_value_len_bytes, Some(2));
+    assert_eq!(facts.columns[1].empty_values, 1);
+    assert_eq!(facts.columns[1].max_value_len_bytes, Some(2));
+    // The legacy-compatible facts are physical: quoted empty is two bytes.
+    assert_eq!(facts.columns[2].empty_values, 0);
+    assert_eq!(facts.columns[2].min_value_len_bytes, Some(1));
+    assert_eq!(facts.columns[2].max_value_len_bytes, Some(2));
+    assert_eq!(facts.columns[3].min_value_len_bytes, Some(1));
+    assert_eq!(facts.columns[3].max_value_len_bytes, Some(6));
+}
+
+#[test]
+fn coverage_distinguishes_discarded_overshoot_from_analyzed_bytes() {
+    let input = format!("a,b\n1,x\n2,{}\n", "y".repeat(1024));
+    let (_temp, path) = write_case("discarded-overshoot.csv", input.as_bytes());
+
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 16,
+        max_rows: 10,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(analysis.facts.coverage.bytes_read, input.len() as u64);
+    assert_eq!(analysis.facts.source_size_bytes, input.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, 8);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::ByteLimit
+    );
+    assert_eq!(analysis.facts.coverage.final_newline, None);
+    assert!(analysis
+        .facts
+        .columns
+        .iter()
+        .all(|column| column.observed_values == 1));
+}
+
+#[test]
+fn coverage_reports_record_limit_without_reading_the_next_record() {
+    let bytes = b"a,b\n1,x\n2,y\n";
+    let (_temp, path) = write_case("record-limit.csv", bytes);
+
+    let analysis = SampleAnalyzer::new(SampleConfig {
+        max_bytes: 1024,
+        max_rows: 1,
+    })
+    .analyze_path(&path)
+    .unwrap();
+
+    assert_eq!(analysis.facts.coverage.sampled_records, 1);
+    assert_eq!(
+        analysis.facts.coverage.source_size_bytes,
+        bytes.len() as u64
+    );
+    assert_eq!(analysis.facts.coverage.bytes_read, 8);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, 8);
+    assert_eq!(analysis.facts.coverage.max_bytes, 1024);
+    assert_eq!(analysis.facts.coverage.max_records, 1);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::RecordLimit
+    );
+    assert_eq!(analysis.facts.coverage.final_newline, None);
+}
+
+#[test]
+fn complete_coverage_reports_missing_final_newline() {
+    let bytes = b"a,b\n1,x";
+    let (_temp, path) = write_case("no-final-newline.csv", bytes);
+
+    let analysis = analyze_path(&path, 64).unwrap();
+
+    assert_eq!(analysis.facts.coverage.bytes_read, bytes.len() as u64);
+    assert_eq!(analysis.facts.coverage.bytes_analyzed, bytes.len() as u64);
+    assert_eq!(
+        analysis.facts.coverage.stop_reason,
+        analysis::AnalysisStopReason::Complete
+    );
+    assert_eq!(analysis.facts.coverage.final_newline, Some(false));
 }
