@@ -249,12 +249,12 @@ archive mode is `raw_zstd`, and reason code
 override.
 
 For a successfully analyzed semicolon, tab, or pipe dialect without a hard
-limitation, `selection_scope` is `format_fallback`, selected archive mode is
-`raw_zstd`, and reason code
-`STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT` records the Phase 6
-capability boundary. Format fallback does not make sampling partial or
-limited. Column recommendations remain policy observations and do not prove
-which encoding an archive writer executed.
+limitation, `selection_scope` is `planner_recommendation`. Phase 7 enables the
+existing DCSV01 structured payload for all four detected delimiters, so the
+Phase 6 format-capability override is no longer applied to current analyze
+reports. Column recommendations remain policy observations and do not prove
+which encoding an archive writer executed: full-input dialect agreement,
+codec validation, and candidate comparison can still select RawZstd.
 
 ## Stable codes
 
@@ -265,6 +265,10 @@ Archive reason codes:
 - `INSUFFICIENT_REPETITION_MAJORITY`
 - `PROJECTED_DICTIONARY_SAVINGS_BELOW_THRESHOLD`
 - `HIGH_REPETITION_DETECTED`
+
+`STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT` remains reserved in the V1
+code domain for Phase 6 reports even though current complete supported-dialect
+analysis no longer emits that capability fallback.
 
 Column reason codes:
 
@@ -321,9 +325,11 @@ unchanged. Alternate-delimiter text adds a `Detected dialect` line and escapes
 control characters in displayed header labels; this presentation does not
 alter facts or input bytes.
 
-Compression and benchmark continue to derive facts from the legacy comma
-analyzer, but Phase 6 adds conservative canonical comma-only eligibility checks
-before structured candidate execution. Inputs not established as comma use
-RawZstd; no alternate facts are routed to an encoder. JSON V1 therefore does
-not change `.dpack` v1/v2 bytes, and alternate-delimiter structured compression
-remains deferred to Phase 7.
+Compression now uses the same multi-delimiter analysis dispatcher. Before it
+executes a structured candidate, canonical full-input detection must agree
+with the analyzed delimiter and the existing DCSV01 codec must prove exact
+reconstruction. Unsafe, ambiguous, unsupported, or unbeneficial candidates use
+RawZstd. The frozen `csv_columnar_dictionary` archive mode remains the DCSV01
+wire identifier for every supported delimiter; JSON V1 does not add a new
+archive-mode token. Benchmark retains its legacy comma-only planning and
+execution scope in this phase.
