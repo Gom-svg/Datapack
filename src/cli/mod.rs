@@ -8,6 +8,7 @@ use crate::generation::{self, Profile};
 use crate::storage;
 use crate::tuning;
 
+mod analysis_json;
 mod analysis_report;
 mod archive;
 mod benchmark;
@@ -40,6 +41,12 @@ enum Command {
         /// Maximum sample size in MB, from 1 to 2048.
         #[arg(long, default_value_t = DEFAULT_SAMPLE_MB)]
         sample_mb: u64,
+        /// Emit a versioned machine-readable JSON report instead of legacy text.
+        #[arg(long)]
+        json: bool,
+        /// Pretty-print JSON output. Requires --json.
+        #[arg(long, requires = "json")]
+        pretty: bool,
     },
     Compress {
         input: PathBuf,
@@ -259,7 +266,9 @@ pub fn run(cli: Cli) -> Result<()> {
             input,
             plan,
             sample_mb,
-        } => analyze_command(input, plan, sample_mb),
+            json,
+            pretty,
+        } => analyze_command(input, plan, sample_mb, json, pretty),
         Command::Compress {
             input,
             output,
@@ -476,10 +485,20 @@ impl BenchmarkOptions {
     }
 }
 
-fn analyze_command(input: PathBuf, include_plan: bool, sample_mb: u64) -> Result<()> {
+fn analyze_command(
+    input: PathBuf,
+    include_plan: bool,
+    sample_mb: u64,
+    json: bool,
+    pretty: bool,
+) -> Result<()> {
     let analysis = analysis::analyze_path(&input, sample_mb)?;
-    analysis_report::print_planning_analysis(&analysis, include_plan);
-    Ok(())
+    if json {
+        analysis_json::print_analysis_v1(&analysis, pretty)
+    } else {
+        analysis_report::print_planning_analysis(&analysis, include_plan);
+        Ok(())
+    }
 }
 
 fn generate_test_data_command(

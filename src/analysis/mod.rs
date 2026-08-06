@@ -6,6 +6,7 @@ use crate::metadata::{DpackMetadata, FileType};
 mod accumulator;
 mod engine;
 mod model;
+mod report;
 
 pub(crate) use engine::{analyze_path, DatasetAnalysis};
 #[cfg(test)]
@@ -13,6 +14,7 @@ pub(crate) use engine::{AnalysisEngine, SampleConfig};
 #[cfg(test)]
 pub(crate) use model::AnalysisStopReason;
 pub(crate) use model::{CardinalityEstimate, DatasetFacts, CARDINALITY_LOWER_BOUND};
+pub(crate) use report::build_report_v1;
 
 pub fn analyze_bytes(path: &Path, bytes: &[u8]) -> DpackMetadata {
     let file_type = FileType::from_path(path);

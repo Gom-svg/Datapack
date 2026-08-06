@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use clap::{Command, CommandFactory};
+use clap::error::ErrorKind;
+use clap::{Command, CommandFactory, Parser};
 use datapack::cli::Cli;
 
 #[test]
@@ -21,9 +22,19 @@ fn structured_cli_surface_is_stable() {
     );
 
     let analyze = subcommand(&root, "analyze");
-    assert_eq!(long_flags(analyze), string_set(&["plan", "sample-mb"]));
+    assert_eq!(
+        long_flags(analyze),
+        string_set(&["json", "plan", "pretty", "sample-mb"])
+    );
     assert_eq!(default_values(analyze), string_map(&[("sample-mb", "64")]));
     assert!(value_enums(analyze).is_empty());
+
+    let pretty_without_json = Cli::try_parse_from(["datapack", "analyze", "input.csv", "--pretty"])
+        .expect_err("--pretty must require --json");
+    assert_eq!(
+        pretty_without_json.kind(),
+        ErrorKind::MissingRequiredArgument
+    );
 
     let compress = subcommand(&root, "compress");
     assert_eq!(
