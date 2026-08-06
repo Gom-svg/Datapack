@@ -293,6 +293,11 @@ output-status wording.
 
 ### 5.1 Non-chunked v1 compression
 
+> Current-behavior note: RFC-003 later added hard-bounded analysis and an
+> earlier streaming RawZstd recovery branch for hard-limited or malformed
+> structured input. The sequence below records the certified Phase 2 behavior
+> for analysis-eligible input.
+
 Non-chunked compression continues to write v1 and to follow this order:
 
 1. validate paths and output policy;
@@ -377,6 +382,10 @@ Phase 2 moves benchmark code; it does not normalize or redesign the benchmark.
 In particular, it preserves the following path-dependent methodology.
 
 ### 6.1 Planning, scope, and validation
+
+> Current-behavior note: RFC-003 later moved `--max-input-mb` validation before
+> planning and caps planning to the same measured prefix, including
+> estimate-only mode. The bullets below record the certified Phase 2 order.
 
 - Every benchmark first runs shared analysis with a fixed 64 MiB planning
   sample.

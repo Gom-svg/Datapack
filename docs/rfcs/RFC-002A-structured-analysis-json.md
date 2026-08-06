@@ -37,6 +37,11 @@ combining `--plan` with `--json` does not change JSON content.
 
 ## 2. Invariants
 
+> Current-behavior note: RFC-003 later replaced characterized read overshoot
+> with a hard-bounded reader and extended JSON V1 with truthful hard-limit
+> outcomes. The invariants below record the certified Phase 3 contract; see
+> `docs/reference/ANALYSIS_JSON_V1.md` for the current V1 contract.
+
 1. `schema_version` is the integer `1`.
 2. JSON names and enum values use explicit V1 conversions. They do not use
    Rust `Debug` output or the legacy text labels.

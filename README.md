@@ -110,7 +110,7 @@ datapack compress input.csv output.dpack --mode best --sample-mb 128
 datapack compress input.csv output.dpack --verify-best
 ```
 
-`--mode fast` follows the planner for one planned compression path. `--mode best` compares candidates when the projection is close, and `--verify-best` always builds both safe candidates and keeps the smaller archive. The columnar encoder validates its own reconstruction before that payload can be stored; an unsafe or unsupported columnar candidate falls back to RawZstd.
+`--mode fast` follows the planner for one planned compression path. `--mode best` compares candidates when the projection is close, and `--verify-best` builds both safe candidates and keeps the smaller archive when structured analysis is eligible. A hard analysis limit or malformed/unsupported structured input overrides both modes and enters the transactional streaming RawZstd path without building a columnar candidate. The columnar encoder still validates its own reconstruction before that payload can be stored; an unsafe or unsupported candidate also falls back to RawZstd.
 
 Dictionary planning limits are controlled with `--max-dictionary-values` and `--max-dictionary-mb`. The defaults are 65,535 values and 64 MiB per column. Columns exceeding a limit switch to `Plain` in the plan.
 
@@ -200,7 +200,7 @@ Large-file controls:
 - `--no-roundtrip` skips decompression and identity validation. `--skip-full-roundtrip` remains an alias.
 - `--no-hash` skips benchmark-side SHA256 identity validation.
 - `--estimate-only` runs bounded planning only.
-- `--max-input-mb <n>` measures the first `n` MiB and never describes that result as full-file validation.
+- `--max-input-mb <n>` measures the first `n` MiB, caps planning to that same prefix (including estimate-only mode), and never describes that result as full-file validation.
 - `--max-in-flight-chunks <n>` controls memory pressure for the optional chunked comparison.
 - `--backend <chunked-raw-zstd|zstd-mt-experimental>` selects the v2 backend to benchmark; the experimental choice changes `--threads` to native zstd workers and remains non-default.
 
