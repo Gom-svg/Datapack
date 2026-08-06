@@ -78,13 +78,32 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
     } else {
         options.runs.max(1)
     };
+    let max_input_bytes = benchmark_max_input_bytes(options.max_input_mb)?;
+    let benchmark_input_size = max_input_bytes
+        .map(|limit| source_size.min(limit))
+        .unwrap_or(source_size);
+    let input_sampled = benchmark_input_size < source_size;
+    let planning_sample_mb = options
+        .max_input_mb
+        .map(|limit_mb| limit_mb.min(DEFAULT_SAMPLE_MB))
+        .unwrap_or(DEFAULT_SAMPLE_MB);
 
     let phase_started = Instant::now();
-    let analysis = analysis::analyze_path(&input, DEFAULT_SAMPLE_MB)?;
+    let analysis =
+        analysis::analyze_path_with_scope(&input, planning_sample_mb, benchmark_input_size)?;
     profile_timings.planning_ms = Some(elapsed_ms(phase_started));
     progress_phase("planning", 0, None, phase_started);
+    if analysis.requires_raw_fallback() {
+        let limitations = analysis
+            .facts
+            .limitations
+            .iter()
+            .map(|limitation| limitation.code())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("benchmark analysis limited ({limitations}); using RawZstd execution.");
+    }
     let estimated_mode = analysis.plan.archive_mode;
-    let max_input_bytes = benchmark_max_input_bytes(options.max_input_mb)?;
 
     if options.estimate_only {
         let partial_reasons =
@@ -100,11 +119,6 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
         }
         return Ok(());
     }
-
-    let benchmark_input_size = max_input_bytes
-        .map(|limit| source_size.min(limit))
-        .unwrap_or(source_size);
-    let input_sampled = benchmark_input_size < source_size;
 
     if estimated_mode == ArchiveMode::RawZstd {
         return streaming::run(

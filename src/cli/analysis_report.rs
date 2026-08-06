@@ -8,6 +8,15 @@ pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: 
     println!("Original size:     {} bytes", facts.source_size_bytes);
     println!("Sampled rows:      {}", facts.coverage.sampled_records);
     println!("Sampled bytes:     {}", facts.coverage.bytes_read);
+    if !facts.limitations.is_empty() {
+        let codes = facts
+            .limitations
+            .iter()
+            .map(|limitation| limitation.code())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Analysis limited:  {codes}");
+    }
     if include_plan {
         println!("Archive mode:        {}", plan.archive_mode.as_str());
         println!(

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::analysis;
-use crate::error::Result;
+use crate::error::{DatapackError, Result};
 use crate::planning::{self, ArchiveMode};
 use crate::storage;
 
@@ -81,8 +81,31 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     }
 
     let phase_started = Instant::now();
-    let analysis = analysis::analyze_path(input, options.sample_mb)?;
+    let analysis = match analysis::analyze_path(input, options.sample_mb) {
+        Ok(analysis) => analysis,
+        Err(DatapackError::InvalidCsv(reason)) => {
+            let planning_ms = elapsed_ms(phase_started);
+            progress_phase("planning", 0, None, phase_started);
+            eprintln!(
+                "structured analysis unavailable ({reason}); using streaming RawZstd fallback."
+            );
+            return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
+        }
+        Err(error) => return Err(error),
+    };
     let planning_ms = elapsed_ms(phase_started);
+    if analysis.requires_raw_fallback() {
+        let limitations = analysis
+            .facts
+            .limitations
+            .iter()
+            .map(|limitation| limitation.code())
+            .collect::<Vec<_>>()
+            .join(", ");
+        progress_phase("planning", 0, None, phase_started);
+        eprintln!("analysis limited ({limitations}); using streaming RawZstd fallback.");
+        return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
+    }
     let mut plan = analysis.plan.clone();
     for column in planning::apply_dictionary_limits(
         &mut plan,
@@ -97,45 +120,7 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     let compares_candidates = options.verify_best
         || (options.mode == CompressMode::Best && plan.estimated_savings_percent < 15.0);
     if plan.archive_mode == ArchiveMode::RawZstd && !compares_candidates {
-        let input_size = std::fs::metadata(input)?.len();
-        let file = File::open(input)?;
-        let reader = BufReader::with_capacity(IO_BUFFER_BYTES, file);
-        let mut progress_reader =
-            ProgressReader::new(reader, "raw-zstd-compress", Some(input_size));
-        let (mut temp_output, temp_file) =
-            storage::output::TempOutput::create(output, options.keep_temp)?;
-        let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
-        let transform_started = Instant::now();
-        storage::write_raw_zstd_archive_stream(
-            input,
-            input_size,
-            &mut progress_reader,
-            &mut writer,
-        )?;
-        writer.flush()?;
-        let output_size = writer.get_ref().metadata()?.len();
-        drop(writer);
-        temp_output.commit(output, options.force)?;
-        progress_reader.finish();
-        let transform_elapsed = transform_started.elapsed();
-        if options.profile {
-            print_direct_profile(&DirectProfile {
-                operation: "compress",
-                archive_version: 1,
-                mode: ArchiveMode::RawZstd.as_str(),
-                backend: "raw-zstd-streaming",
-                verify_enabled: None,
-                input_size_bytes: input_size,
-                output_size_bytes: output_size,
-                planning_ms: Some(planning_ms),
-                read_ms: None,
-                transform_ms: duration_ms(transform_elapsed),
-                write_ms: None,
-                total_ms: elapsed_ms(total_started),
-                throughput_mb_per_sec: mb_per_second_u64(input_size, transform_elapsed),
-            });
-        }
-        return Ok(());
+        return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
     }
 
     let read_started = Instant::now();
@@ -198,6 +183,48 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
             write_ms: Some(write_ms),
             total_ms: elapsed_ms(total_started),
             throughput_mb_per_sec: mb_per_second_u64(bytes.len() as u64, transform_elapsed),
+        });
+    }
+    Ok(())
+}
+
+fn compress_raw_zstd_streaming(
+    input: &Path,
+    output: &Path,
+    options: CompressOptions,
+    total_started: Instant,
+    planning_ms: u64,
+) -> Result<()> {
+    let input_size = std::fs::metadata(input)?.len();
+    let file = File::open(input)?;
+    let reader = BufReader::with_capacity(IO_BUFFER_BYTES, file);
+    let mut progress_reader = ProgressReader::new(reader, "raw-zstd-compress", Some(input_size));
+    let (mut temp_output, temp_file) =
+        storage::output::TempOutput::create(output, options.keep_temp)?;
+    let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
+    let transform_started = Instant::now();
+    storage::write_raw_zstd_archive_stream(input, input_size, &mut progress_reader, &mut writer)?;
+    writer.flush()?;
+    let output_size = writer.get_ref().metadata()?.len();
+    drop(writer);
+    temp_output.commit(output, options.force)?;
+    progress_reader.finish();
+    let transform_elapsed = transform_started.elapsed();
+    if options.profile {
+        print_direct_profile(&DirectProfile {
+            operation: "compress",
+            archive_version: 1,
+            mode: ArchiveMode::RawZstd.as_str(),
+            backend: "raw-zstd-streaming",
+            verify_enabled: None,
+            input_size_bytes: input_size,
+            output_size_bytes: output_size,
+            planning_ms: Some(planning_ms),
+            read_ms: None,
+            transform_ms: duration_ms(transform_elapsed),
+            write_ms: None,
+            total_ms: elapsed_ms(total_started),
+            throughput_mb_per_sec: mb_per_second_u64(input_size, transform_elapsed),
         });
     }
     Ok(())
