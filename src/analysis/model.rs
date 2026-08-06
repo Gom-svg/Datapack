@@ -8,6 +8,45 @@
 pub(crate) const CARDINALITY_LOWER_BOUND: u64 = 8_193;
 pub(crate) const LIMITED_RAW_FALLBACK_REASON: &str =
     "Analysis could not safely complete within configured limits; RawZstd fallback required.";
+pub(crate) const DELIMITED_FORMAT_RAW_FALLBACK_REASON: &str =
+    "Structured compression is not enabled for this detected delimiter; RawZstd fallback required.";
+pub(crate) const COMMA_ELIGIBILITY_RAW_FALLBACK_REASON: &str =
+    "Canonical comma structured-compression eligibility was not established; RawZstd fallback required.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DelimitedFormat {
+    Comma,
+    Semicolon,
+    Tab,
+    Pipe,
+}
+
+impl DelimitedFormat {
+    pub(crate) const fn from_byte(delimiter: u8) -> Option<Self> {
+        match delimiter {
+            b',' => Some(Self::Comma),
+            b';' => Some(Self::Semicolon),
+            b'\t' => Some(Self::Tab),
+            b'|' => Some(Self::Pipe),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn delimiter(self) -> u8 {
+        match self {
+            Self::Comma => b',',
+            Self::Semicolon => b';',
+            Self::Tab => b'\t',
+            Self::Pipe => b'|',
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalysisParser {
+    LegacyCsvPhysical,
+    CanonicalDelimited(DelimitedFormat),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CardinalityEstimate {
@@ -71,12 +110,18 @@ impl AnalysisLimitation {
         }
     }
 
-    pub(crate) const fn message(self) -> &'static str {
+    pub(crate) const fn message(self, parser: AnalysisParser) -> &'static str {
         match self {
             Self::IncompleteHeader => {
                 "The header did not fit within the configured analysis scope."
             }
+            Self::HeaderByteLimit if matches!(parser, AnalysisParser::CanonicalDelimited(_)) => {
+                "The logical header record exceeded the header byte limit."
+            }
             Self::HeaderByteLimit => "The first physical record exceeded the header byte limit.",
+            Self::RecordByteLimit if matches!(parser, AnalysisParser::CanonicalDelimited(_)) => {
+                "A logical data record exceeded the record byte limit."
+            }
             Self::RecordByteLimit => "A physical data record exceeded the record byte limit.",
             Self::ColumnLimit => "The header exceeded the maximum supported analysis column count.",
             Self::MemoryLimit => "Analysis stopped at the internal memory accounting limit.",
@@ -94,7 +139,7 @@ pub(crate) struct AnalysisCoverage {
     pub(crate) scope_size_bytes: u64,
     /// Bytes consumed by the bounded sampler.
     pub(crate) bytes_read: u64,
-    /// Bytes whose line structure and fields were actually analyzed.
+    /// Bytes whose selected record structure and fields were actually analyzed.
     pub(crate) bytes_analyzed: u64,
     pub(crate) sampled_records: u64,
     pub(crate) max_bytes: u64,
@@ -128,7 +173,8 @@ pub(crate) struct ColumnFacts {
 pub(crate) struct DatasetFacts {
     pub(crate) input_name: String,
     pub(crate) source_size_bytes: u64,
-    /// Exact physical header width when the complete header was available.
+    pub(crate) parser: AnalysisParser,
+    /// Exact first-record header width when the complete header was available.
     pub(crate) observed_column_count: Option<usize>,
     pub(crate) coverage: AnalysisCoverage,
     pub(crate) columns: Vec<ColumnFacts>,

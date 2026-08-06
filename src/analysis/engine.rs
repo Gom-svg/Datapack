@@ -5,7 +5,8 @@ use std::time::Instant;
 
 use super::accumulator::AnalysisAccumulator;
 use super::model::{
-    AnalysisCoverage, AnalysisLimitation, AnalysisStopReason, DatasetFacts,
+    AnalysisCoverage, AnalysisLimitation, AnalysisParser, AnalysisStopReason, DatasetFacts,
+    COMMA_ELIGIBILITY_RAW_FALLBACK_REASON, DELIMITED_FORMAT_RAW_FALLBACK_REASON,
     LIMITED_RAW_FALLBACK_REASON,
 };
 use crate::error::{DatapackError, Result};
@@ -19,7 +20,7 @@ const DEFAULT_SAMPLE_MB: u64 = 64;
 const MIN_SAMPLE_MB: u64 = 1;
 const MAX_SAMPLE_MB: u64 = 2048;
 const DEFAULT_MAX_SAMPLE_ROWS: u64 = 10_000;
-const READER_BUFFER_BYTES: usize = 256 * 1024;
+pub(super) const READER_BUFFER_BYTES: usize = 256 * 1024;
 const DEFAULT_MAX_HEADER_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_COLUMNS: usize = 4_096;
@@ -81,7 +82,7 @@ impl Default for AnalysisLimits {
 }
 
 impl AnalysisLimits {
-    fn cardinality_capacity(
+    pub(super) fn cardinality_capacity(
         &self,
         retained_header_bytes: usize,
         column_count: usize,
@@ -104,11 +105,25 @@ pub(crate) struct DatasetAnalysis {
     pub(crate) facts: DatasetFacts,
     pub(crate) columns: Vec<ColumnProfile>,
     pub(crate) plan: CompressionPlan,
+    pub(crate) plan_disposition: PlanDisposition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanDisposition {
+    PlannerRecommendation,
+    AnalysisLimitFallback,
+    FormatFallback,
 }
 
 impl DatasetAnalysis {
     pub(crate) fn requires_raw_fallback(&self) -> bool {
-        !self.facts.limitations.is_empty()
+        self.plan_disposition != PlanDisposition::PlannerRecommendation
+    }
+
+    pub(crate) fn apply_comma_eligibility_fallback(&mut self) {
+        self.plan.archive_mode = ArchiveMode::RawZstd;
+        self.plan.reason = COMMA_ELIGIBILITY_RAW_FALLBACK_REASON.to_string();
+        self.plan_disposition = PlanDisposition::FormatFallback;
     }
 }
 
@@ -190,6 +205,7 @@ impl AnalysisEngine {
                     DatasetFacts {
                         input_name,
                         source_size_bytes,
+                        parser: AnalysisParser::LegacyCsvPhysical,
                         observed_column_count: None,
                         coverage: coverage(
                             &coverage_context,
@@ -213,6 +229,7 @@ impl AnalysisEngine {
                     DatasetFacts {
                         input_name,
                         source_size_bytes,
+                        parser: AnalysisParser::LegacyCsvPhysical,
                         observed_column_count: None,
                         coverage: coverage(
                             &coverage_context,
@@ -250,6 +267,7 @@ impl AnalysisEngine {
                 DatasetFacts {
                     input_name,
                     source_size_bytes,
+                    parser: AnalysisParser::LegacyCsvPhysical,
                     observed_column_count: Some(observed_column_count),
                     coverage: coverage(
                         &coverage_context,
@@ -278,6 +296,7 @@ impl AnalysisEngine {
                 DatasetFacts {
                     input_name,
                     source_size_bytes,
+                    parser: AnalysisParser::LegacyCsvPhysical,
                     observed_column_count: Some(observed_column_count),
                     coverage: coverage(
                         &coverage_context,
@@ -379,6 +398,7 @@ impl AnalysisEngine {
         let facts = DatasetFacts {
             input_name,
             source_size_bytes,
+            parser: AnalysisParser::LegacyCsvPhysical,
             observed_column_count: Some(observed_column_count),
             coverage: coverage(
                 &coverage_context,
@@ -410,14 +430,21 @@ pub(crate) fn analyze_path_with_scope(
         .analyze_path(path)
 }
 
-fn finish_analysis(facts: DatasetFacts, started: Instant) -> DatasetAnalysis {
+pub(super) fn finish_analysis(facts: DatasetFacts, started: Instant) -> DatasetAnalysis {
     let features = PlannerFeaturesV1::from_facts(&facts);
     let columns = PlannerPolicyV1::profiles(&features);
     let mut plan = PlannerPolicyV1::plan(&columns, elapsed_millis(started));
-    if !facts.limitations.is_empty() {
+    let plan_disposition = if !facts.limitations.is_empty() {
         plan.archive_mode = ArchiveMode::RawZstd;
         plan.reason = LIMITED_RAW_FALLBACK_REASON.to_string();
-    }
+        PlanDisposition::AnalysisLimitFallback
+    } else if matches!(facts.parser, AnalysisParser::CanonicalDelimited(_)) {
+        plan.archive_mode = ArchiveMode::RawZstd;
+        plan.reason = DELIMITED_FORMAT_RAW_FALLBACK_REASON.to_string();
+        PlanDisposition::FormatFallback
+    } else {
+        PlanDisposition::PlannerRecommendation
+    };
     // The old implementation sampled elapsed time twice. Preserve that
     // observable integer timing behavior for the legacy renderer.
     plan.planning_time_ms = elapsed_millis(started);
@@ -425,6 +452,7 @@ fn finish_analysis(facts: DatasetFacts, started: Instant) -> DatasetAnalysis {
         facts,
         columns,
         plan,
+        plan_disposition,
     }
 }
 
@@ -468,20 +496,20 @@ fn elapsed_millis(started: Instant) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoundKind {
+pub(super) enum BoundKind {
     Sample,
     Record,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoundedRecord {
+pub(super) enum BoundedRecord {
     Eof,
     Complete { bytes: u64 },
     Limit { bytes: u64, kind: BoundKind },
 }
 
 impl BoundedRecord {
-    const fn bytes_consumed(self) -> u64 {
+    pub(super) const fn bytes_consumed(self) -> u64 {
         match self {
             Self::Eof => 0,
             Self::Complete { bytes } | Self::Limit { bytes, .. } => bytes,
@@ -489,7 +517,7 @@ impl BoundedRecord {
     }
 }
 
-fn read_bounded_record<R: BufRead>(
+pub(super) fn read_bounded_record<R: BufRead>(
     reader: &mut R,
     record: &mut Vec<u8>,
     remaining_sample_bytes: u64,
@@ -573,14 +601,14 @@ fn validate_csv_prefix(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn display_input_name(path: &Path) -> String {
+pub(super) fn display_input_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("input")
         .to_string()
 }
 
-fn record_as_str(record: &[u8]) -> Result<&str> {
+pub(super) fn record_as_str(record: &[u8]) -> Result<&str> {
     std::str::from_utf8(record)
         .map_err(|_| DatapackError::InvalidCsv("record is not valid UTF-8".to_string()))
 }
@@ -589,7 +617,7 @@ fn trim_newline(line: &str) -> &str {
     line.trim_end_matches('\n').trim_end_matches('\r')
 }
 
-fn has_line_ending_bytes(record: &[u8]) -> bool {
+pub(super) fn has_line_ending_bytes(record: &[u8]) -> bool {
     record.ends_with(b"\n") || record.ends_with(b"\r")
 }
 

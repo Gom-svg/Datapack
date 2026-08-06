@@ -5,10 +5,10 @@
 
 use serde::Serialize;
 
-use super::engine::DatasetAnalysis;
+use super::engine::{DatasetAnalysis, PlanDisposition};
 use super::model::{
-    AnalysisLimitation, AnalysisStopReason, CardinalityEstimate, ColumnFacts,
-    LIMITED_RAW_FALLBACK_REASON,
+    AnalysisLimitation, AnalysisParser, AnalysisStopReason, CardinalityEstimate, ColumnFacts,
+    DelimitedFormat, DELIMITED_FORMAT_RAW_FALLBACK_REASON, LIMITED_RAW_FALLBACK_REASON,
 };
 use crate::error::{DatapackError, Result};
 use crate::planning::{ArchiveMode, ColumnProfile, ColumnStrategy};
@@ -229,7 +229,7 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
         .collect::<Result<Vec<_>>>()?;
     let diagnostics = diagnostics(analysis);
     let coverage = &analysis.facts.coverage;
-    let hard_limited = analysis.requires_raw_fallback();
+    let hard_limited = !analysis.facts.limitations.is_empty();
     let (scope, completeness, limited, limit_reached) = match coverage.stop_reason {
         AnalysisStopReason::Complete => {
             if hard_limited {
@@ -288,12 +288,7 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
         dataset: DatasetReportV1 {
             source_size_bytes: analysis.facts.source_size_bytes,
             column_count: analysis.facts.observed_column_count,
-            parser: ParserReportV1 {
-                format: "csv",
-                delimiter: ",",
-                record_model: "physical_line",
-                header_mode: "first_record",
-            },
+            parser: parser_report(analysis.facts.parser),
             columns,
         },
         sampling: SamplingReportV1 {
@@ -314,10 +309,10 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
                 name: "PlannerPolicyV1",
                 version: 1,
             },
-            selection_scope: if hard_limited {
-                "safe_fallback"
-            } else {
-                "planner_recommendation"
+            selection_scope: match analysis.plan_disposition {
+                PlanDisposition::PlannerRecommendation => "planner_recommendation",
+                PlanDisposition::AnalysisLimitFallback => "safe_fallback",
+                PlanDisposition::FormatFallback => "format_fallback",
             },
             candidate_archive_modes: ARCHIVE_CANDIDATES,
             candidate_column_strategies: COLUMN_CANDIDATES,
@@ -336,6 +331,26 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
         },
         diagnostics,
     })
+}
+
+fn parser_report(parser: AnalysisParser) -> ParserReportV1 {
+    let (format, delimiter, record_model) = match parser {
+        AnalysisParser::LegacyCsvPhysical => ("csv", ",", "physical_line"),
+        AnalysisParser::CanonicalDelimited(DelimitedFormat::Comma) => {
+            ("csv", ",", "logical_record")
+        }
+        AnalysisParser::CanonicalDelimited(DelimitedFormat::Semicolon) => {
+            ("semicolon_delimited", ";", "logical_record")
+        }
+        AnalysisParser::CanonicalDelimited(DelimitedFormat::Tab) => ("tsv", "\t", "logical_record"),
+        AnalysisParser::CanonicalDelimited(DelimitedFormat::Pipe) => ("psv", "|", "logical_record"),
+    };
+    ParserReportV1 {
+        format,
+        delimiter,
+        record_model,
+        header_mode: "first_record",
+    }
 }
 
 fn column_report<'a>(
@@ -425,7 +440,7 @@ fn diagnostics(analysis: &DatasetAnalysis) -> Vec<DiagnosticV1> {
         diagnostics.push(DiagnosticV1 {
             code: limitation.code(),
             severity: DiagnosticSeverityV1::Warning,
-            message: limitation.message(),
+            message: limitation.message(analysis.facts.parser),
             column_index: None,
         });
     }
@@ -478,6 +493,9 @@ fn column_strategy(strategy: ColumnStrategy) -> ColumnStrategyV1 {
 fn archive_reason_code(reason: &str) -> Option<&'static str> {
     match reason {
         LIMITED_RAW_FALLBACK_REASON => Some("ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK"),
+        DELIMITED_FORMAT_RAW_FALLBACK_REASON => {
+            Some("STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT")
+        }
         "Insufficient repetition across majority of columns for dictionary gains." => {
             Some("INSUFFICIENT_REPETITION_MAJORITY")
         }
@@ -532,6 +550,10 @@ mod tests {
             Some("ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK")
         );
         assert_eq!(
+            archive_reason_code(super::DELIMITED_FORMAT_RAW_FALLBACK_REASON),
+            Some("STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT")
+        );
+        assert_eq!(
             archive_reason_code(
                 "Insufficient repetition across majority of columns for dictionary gains."
             ),
@@ -571,5 +593,20 @@ mod tests {
         for (reason, expected) in cases {
             assert_eq!(column_reason_code(reason), Some(expected));
         }
+    }
+
+    #[test]
+    fn record_limit_diagnostics_match_the_selected_record_model() {
+        assert_eq!(
+            super::AnalysisLimitation::HeaderByteLimit
+                .message(super::AnalysisParser::LegacyCsvPhysical),
+            "The first physical record exceeded the header byte limit."
+        );
+        assert_eq!(
+            super::AnalysisLimitation::RecordByteLimit.message(
+                super::AnalysisParser::CanonicalDelimited(super::DelimitedFormat::Pipe)
+            ),
+            "A logical data record exceeded the record byte limit."
+        );
     }
 }

@@ -93,6 +93,8 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
         }
         Err(error) => return Err(error),
     };
+    let comma_structured_eligible = analysis.requires_raw_fallback()
+        || analysis::comma_structured_compression_eligible_path(input, options.sample_mb, None)?;
     let planning_ms = elapsed_ms(phase_started);
     if analysis.requires_raw_fallback() {
         let limitations = analysis
@@ -104,6 +106,13 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
             .join(", ");
         progress_phase("planning", 0, None, phase_started);
         eprintln!("analysis limited ({limitations}); using streaming RawZstd fallback.");
+        return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
+    }
+    if !comma_structured_eligible {
+        progress_phase("planning", 0, None, phase_started);
+        eprintln!(
+            "canonical comma structured-compression eligibility was not established; using streaming RawZstd fallback."
+        );
         return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
     }
     let mut plan = analysis.plan.clone();

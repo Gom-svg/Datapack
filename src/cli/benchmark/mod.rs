@@ -89,11 +89,24 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
         .unwrap_or(DEFAULT_SAMPLE_MB);
 
     let phase_started = Instant::now();
-    let analysis =
+    let mut analysis =
         analysis::analyze_path_with_scope(&input, planning_sample_mb, benchmark_input_size)?;
+    let analysis_was_limited = analysis.requires_raw_fallback();
+    if !analysis_was_limited
+        && !analysis::comma_structured_compression_eligible_path(
+            &input,
+            planning_sample_mb,
+            Some(benchmark_input_size),
+        )?
+    {
+        analysis.apply_comma_eligibility_fallback();
+        eprintln!(
+            "benchmark canonical comma structured-compression eligibility was not established; using RawZstd execution."
+        );
+    }
     profile_timings.planning_ms = Some(elapsed_ms(phase_started));
     progress_phase("planning", 0, None, phase_started);
-    if analysis.requires_raw_fallback() {
+    if analysis_was_limited {
         let limitations = analysis
             .facts
             .limitations

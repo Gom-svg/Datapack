@@ -179,6 +179,92 @@ enum ScannerState {
     PendingCr,
 }
 
+/// Incremental logical-record boundary tracker for bounded streaming callers.
+///
+/// Field extraction remains with [`parse_document`]; this adapter retains only
+/// lexical state and never owns input bytes.
+pub(crate) struct LogicalRecordFramer {
+    delimiter: u8,
+    quote_mode: QuoteMode,
+    state: ScannerState,
+    at_field_start: bool,
+}
+
+impl LogicalRecordFramer {
+    pub(crate) fn new(dialect: DelimitedDialect) -> Self {
+        Self {
+            delimiter: dialect.delimiter,
+            quote_mode: dialect.quote_mode,
+            state: ScannerState::Outside,
+            at_field_start: true,
+        }
+    }
+
+    /// Consumes one byte and reports whether it completed the current logical
+    /// record. The caller must stop feeding this instance after `true`.
+    pub(crate) fn push(&mut self, byte: u8) -> Result<bool, ScanError> {
+        loop {
+            match self.state {
+                ScannerState::InQuotes => {
+                    if byte == QUOTE {
+                        self.state = ScannerState::AfterQuote;
+                    }
+                    return Ok(false);
+                }
+                ScannerState::AfterQuote => {
+                    if byte == QUOTE {
+                        self.state = ScannerState::InQuotes;
+                        return Ok(false);
+                    }
+                    self.state = ScannerState::Outside;
+                    self.at_field_start = false;
+                }
+                ScannerState::PendingCr => {
+                    if byte != b'\n' {
+                        return Err(ScanError::BareCarriageReturn);
+                    }
+                    self.state = ScannerState::Outside;
+                    return Ok(true);
+                }
+                ScannerState::Outside => {
+                    if self.quote_mode == QuoteMode::Disabled && byte == QUOTE {
+                        return Err(ScanError::QuoteNotAllowed);
+                    }
+                    if self.quote_mode == QuoteMode::Dcsv01Compatible
+                        && byte == QUOTE
+                        && self.at_field_start
+                    {
+                        self.state = ScannerState::InQuotes;
+                        return Ok(false);
+                    }
+                    if byte == self.delimiter {
+                        self.at_field_start = true;
+                        return Ok(false);
+                    }
+                    if byte == b'\r' {
+                        self.state = ScannerState::PendingCr;
+                        return Ok(false);
+                    }
+                    if byte == b'\n' {
+                        return Ok(true);
+                    }
+                    self.at_field_start = false;
+                    return Ok(false);
+                }
+            }
+        }
+    }
+
+    /// Validates an unterminated final logical record at actual EOF.
+    pub(crate) fn finish(&self) -> Result<(), ScanError> {
+        match self.state {
+            ScannerState::InQuotes => Err(ScanError::UnterminatedQuotedField),
+            ScannerState::PendingCr => Err(ScanError::BareCarriageReturn),
+            ScannerState::Outside | ScannerState::AfterQuote => Ok(()),
+        }
+    }
+}
+
 struct Scanner {
     dialect: DelimitedDialect,
     limits: ScanLimits,
@@ -1300,6 +1386,61 @@ mod tests {
                 limit: 0,
             })
         );
+    }
+
+    #[test]
+    fn logical_record_framer_preserves_shared_scanner_boundaries() {
+        type FramingCase<'a> = (u8, &'a [u8], &'a [&'a [u8]]);
+        let cases: &[FramingCase<'_>] = &[
+            (
+                b',',
+                b"a,b\n1,\"x\ny\"\n2,\"a\"\"b\"",
+                &[b"a,b\n", b"1,\"x\ny\"\n", b"2,\"a\"\"b\""],
+            ),
+            (
+                b'\t',
+                b"a\tb\r\n1\t\"x\ty\"\r\n",
+                &[b"a\tb\r\n", b"1\t\"x\ty\"\r\n"],
+            ),
+            (b'|', b"a|b\n1||\n", &[b"a|b\n", b"1||\n"]),
+            (b';', b"a;b\n1;2", &[b"a;b\n", b"1;2"]),
+        ];
+
+        for &(delimiter, input, expected) in cases {
+            let dialect = dialect(delimiter);
+            let mut framer = LogicalRecordFramer::new(dialect);
+            let mut start = 0usize;
+            let mut records = Vec::new();
+            for (index, &byte) in input.iter().enumerate() {
+                if framer.push(byte).unwrap() {
+                    let end = index + 1;
+                    records.push(&input[start..end]);
+                    start = end;
+                    framer = LogicalRecordFramer::new(dialect);
+                }
+            }
+            framer.finish().unwrap();
+            if start < input.len() {
+                records.push(&input[start..]);
+            }
+            assert_eq!(records, expected, "delimiter {delimiter:?}");
+        }
+    }
+
+    #[test]
+    fn logical_record_framer_validates_only_at_actual_eof() {
+        let dialect = dialect(b'|');
+        let mut open_quote = LogicalRecordFramer::new(dialect);
+        for byte in b"1|\"continued\nrecord" {
+            assert!(!open_quote.push(*byte).unwrap());
+        }
+        assert_eq!(open_quote.finish(), Err(ScanError::UnterminatedQuotedField));
+
+        let mut bare_cr = LogicalRecordFramer::new(dialect);
+        for byte in b"1|2\r" {
+            assert!(!bare_cr.push(*byte).unwrap());
+        }
+        assert_eq!(bare_cr.finish(), Err(ScanError::BareCarriageReturn));
     }
 
     #[test]

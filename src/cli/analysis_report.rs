@@ -1,4 +1,4 @@
-use crate::analysis::DatasetAnalysis;
+use crate::analysis::{AnalysisParser, DatasetAnalysis, DelimitedFormat};
 use crate::planning::ArchiveMode;
 
 pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: bool) {
@@ -6,6 +6,9 @@ pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: 
     let plan = &analysis.plan;
     println!("DataPack Analysis: {}", facts.input_name);
     println!("Original size:     {} bytes", facts.source_size_bytes);
+    if let AnalysisParser::CanonicalDelimited(format) = facts.parser {
+        println!("Detected dialect:  {}", dialect_label(format));
+    }
     println!("Sampled rows:      {}", facts.coverage.sampled_records);
     println!("Sampled bytes:     {}", facts.coverage.bytes_read);
     if !facts.limitations.is_empty() {
@@ -37,6 +40,10 @@ pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: 
         "", "", "", "", ""
     );
     for column in &analysis.columns {
+        let column_name = match facts.parser {
+            AnalysisParser::LegacyCsvPhysical => truncate_display(&column.column_name, 14),
+            AnalysisParser::CanonicalDelimited(_) => truncate_control_safe(&column.column_name, 14),
+        };
         let unique = if column.exceeded_cardinality {
             ">65535".to_string()
         } else {
@@ -44,7 +51,7 @@ pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: 
         };
         println!(
             "{:<14} {:<15} {:>12} {:>8.1}%  {}",
-            truncate_display(&column.column_name, 14),
+            column_name,
             column.recommended_strategy.as_str(),
             unique,
             column.repetition_rate * 100.0,
@@ -58,6 +65,41 @@ pub(super) fn print_planning_analysis(analysis: &DatasetAnalysis, include_plan: 
         println!();
         println!("Fallback to RawZstd: {}", plan.reason);
     }
+}
+
+fn dialect_label(format: DelimitedFormat) -> &'static str {
+    match format {
+        DelimitedFormat::Comma => "CSV (,)",
+        DelimitedFormat::Semicolon => "semicolon-delimited (;)",
+        DelimitedFormat::Tab => "TSV (tab)",
+        DelimitedFormat::Pipe => "PSV (|)",
+    }
+}
+
+fn truncate_control_safe(value: &str, width: usize) -> String {
+    let mut output = String::with_capacity(width);
+    for character in value.chars() {
+        let escaped: &[char] = match character {
+            '\n' => &['\\', 'n'],
+            '\r' => &['\\', 'r'],
+            '\t' => &['\\', 't'],
+            _ if character.is_control() => &['?'],
+            _ => {
+                if output.chars().count() >= width {
+                    break;
+                }
+                output.push(character);
+                continue;
+            }
+        };
+        for escaped_character in escaped {
+            if output.chars().count() >= width {
+                return output;
+            }
+            output.push(*escaped_character);
+        }
+    }
+    output
 }
 
 fn truncate_display(value: &str, width: usize) -> String {

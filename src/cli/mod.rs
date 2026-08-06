@@ -492,7 +492,7 @@ fn analyze_command(
     json: bool,
     pretty: bool,
 ) -> Result<()> {
-    let analysis = analysis::analyze_path(&input, sample_mb)?;
+    let analysis = analysis::analyze_cli_path(&input, sample_mb)?;
     if json {
         analysis_json::print_analysis_v1(&analysis, pretty)
     } else {

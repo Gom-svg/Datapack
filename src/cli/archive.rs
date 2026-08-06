@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::analysis;
 use crate::error::Result;
 use crate::metadata::PayloadKind;
 use crate::planning::ArchiveMode;
@@ -21,6 +22,16 @@ pub(super) fn encode_for_plan_detailed(
             None,
         )),
         ArchiveMode::CsvColumnarDictionary => {
+            if !analysis::comma_structured_compression_eligible_bytes(bytes) {
+                return Ok((
+                    storage::encode_raw_zstd_archive(input, bytes)?,
+                    ArchiveMode::RawZstd,
+                    Some(
+                        "canonical comma structured-compression eligibility was not established"
+                            .to_string(),
+                    ),
+                ));
+            }
             let (archive, error) =
                 storage::encode_columnar_dictionary_archive_detailed(input, bytes)?;
             match archive {
@@ -47,6 +58,17 @@ pub(super) fn encode_best_archive(
     bytes: &[u8],
 ) -> Result<(Vec<u8>, ArchiveMode, usize, Option<String>)> {
     let raw = storage::encode_raw_zstd_archive(input, bytes)?;
+    if !analysis::comma_structured_compression_eligible_bytes(bytes) {
+        return Ok((
+            raw,
+            ArchiveMode::RawZstd,
+            0,
+            Some(
+                "canonical comma structured-compression eligibility was not established"
+                    .to_string(),
+            ),
+        ));
+    }
     let (columnar, columnar_error) =
         storage::encode_columnar_dictionary_archive_detailed(input, bytes)?;
     if let Some(columnar) = columnar {
