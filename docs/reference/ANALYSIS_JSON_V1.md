@@ -37,6 +37,10 @@ unknown future codes, and `dataset.column_count` is an unsigned integer or
 `null` when a complete header was not available. This V1 extension is required
 to report a safe partial result instead of inventing a column count.
 
+Phase 6 extends the documented value domains in `dataset.parser` for
+semicolon-, tab-, and pipe-delimited analysis. It does not add fields to the
+report object or change the existing comma parser values.
+
 The complete V1 shape is:
 
 ```json
@@ -133,16 +137,56 @@ The complete V1 shape is:
 Values in this example are illustrative. Field names, enum strings, reason
 codes, and diagnostic codes are contract values.
 
-`dataset.parser` names the compatibility parser that was attempted. It is not
-a format-detection or whole-file-validity claim. `dataset.columns` contains
+`dataset.parser` names the parser used to produce the facts. For comma input it
+continues to identify the legacy physical-line compatibility parser. For a
+successfully detected alternate delimiter it identifies the canonical
+logical-record parser. On a partial sample, the parser object does not claim
+that unexamined bytes satisfy the selected dialect. `dataset.columns` contains
 only columns for which factual accumulators could safely be built. It can be
 empty while `column_count` is known (for example, at the column limit), and
 both are empty/`null` when the header itself was incomplete.
 
+## Parser and delimiter values
+
+The stable Phase 6 parser values are:
+
+| `format` | `delimiter` | `record_model` | `header_mode` |
+|---|---|---|---|
+| `csv` | `,` | `physical_line` | `first_record` |
+| `semicolon_delimited` | `;` | `logical_record` | `first_record` |
+| `tsv` | tab character | `logical_record` | `first_record` |
+| `psv` | `|` | `logical_record` | `first_record` |
+
+The tab delimiter is a one-character string whose JSON representation uses
+the `\t` escape. Format and record-model tokens are lowercase and
+underscore-separated exactly as shown.
+
+CLI detection evaluates a bounded prefix of at most 32 physical records and
+1 MiB in the canonical candidate order comma, semicolon, tab, then pipe. The
+detector re-evaluates at complete physical boundaries so later evidence can
+resolve delimiter decoys in the header. A uniquely detected comma retains the
+legacy physical-line analyzer. A uniquely detected alternate delimiter uses
+the logical-record analyzer, whose first logical record is the header and whose
+subsequent records may contain quoted newlines.
+
+Equal best candidates are an error rather than an inferred winner. The error
+lists candidate labels in canonical order, exits with code 2, and produces no
+JSON stdout. Undetected complete input consults the legacy comma analyzer so
+specific compatibility outcomes remain stable; its generic non-CSV preflight
+failure is reported instead as unsupported/unstructured input. Completed
+malformed input retains the legacy error authority. A detection cap after a
+safe complete prefix may select that prefix's parser, after which normal
+sampling fields disclose the partial coverage. If the first quoted logical
+header itself crosses the cap and no parser can be established, analysis exits
+with a bounded detection error and no JSON stdout. Consequently V1 has neither
+an `unknown`/`ambiguous` parser token nor a JSON error envelope.
+
 ## Sampling semantics
 
-The compatible V1 analyzer uses the first physical record as a header and
-counts accepted nonblank data records in `records_analyzed`.
+The legacy comma analyzer uses the first physical record as its header. The
+alternate-delimiter analyzer uses the first logical record as its header.
+Both count accepted nonblank data records in `records_analyzed`; quoted
+physical newlines inside one alternate record do not increment that count.
 
 | Condition | `scope` | `completeness` | `limited` | `limit_reached` |
 |---|---|---|---:|---|
@@ -156,11 +200,16 @@ counts accepted nonblank data records in `records_analyzed`.
 | Shared cardinality budget was exhausted after a full scan | `full` | `partial` | `true` | `cardinality_memory_limit` |
 
 `bytes_read` is capped by `configured_max_bytes` and by any narrower consumer
-scope. `bytes_analyzed` includes only complete physical records accepted for
-field analysis; it excludes an incomplete fragment retained up to a byte cap.
-The analyzer performs a separate fixed 4 KiB prefix preflight before this
-coverage interval, so these fields are scanner-consumption counts rather than
-whole-process I/O counters or RSS measurements.
+scope. For legacy comma analysis, `bytes_analyzed` includes only complete
+physical records accepted for field analysis. For alternate analysis, it
+includes only complete logical records. In both cases it excludes an
+incomplete fragment retained up to a byte cap.
+
+The CLI performs the bounded multi-record detection read before the reported
+coverage interval. A detected comma then also passes through the legacy
+analyzer's fixed 4 KiB prefix preflight. These reads are not added to
+`bytes_read` or `bytes_analyzed`; those fields are selected-analyzer scanner
+counts rather than whole-process I/O counters or RSS measurements.
 
 `scope` describes source-byte coverage; `completeness` also accounts for hard
 fact limitations. Consequently `scope: "full"` can coexist with
@@ -186,8 +235,10 @@ exact. Otherwise it is `{"kind":"unknown","value":null}`. The internal legacy
 planner sentinel is not emitted as a factual value.
 
 Minimum, maximum, and mean byte length are `null` when no values were observed.
-`numeric_values` counts physical fields accepted by the legacy integer or float
-parser; it is not a type declaration.
+`numeric_values` counts raw lexical fields accepted by the existing integer or
+float parse checks; it is not a type declaration. Alternate logical fields
+retain quotes, doubled quotes, and embedded newlines in these factual byte
+metrics rather than exposing a normalized value.
 
 All planner sizes, savings, and memory numbers are estimates. MiB and KiB names
 use 1024-based units. Normally `selection_scope` is `planner_recommendation`
@@ -195,14 +246,22 @@ and selections identify `PlannerPolicyV1` results. When a hard limitation makes
 structured planning unsafe, `selection_scope` is `safe_fallback`, the selected
 archive mode is `raw_zstd`, and reason code
 `ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK` identifies the compatibility adapter's
-override. Column recommendations remain partial policy observations and do not
-prove which encoding an archive writer executed.
+override.
+
+For a successfully analyzed semicolon, tab, or pipe dialect without a hard
+limitation, `selection_scope` is `format_fallback`, selected archive mode is
+`raw_zstd`, and reason code
+`STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT` records the Phase 6
+capability boundary. Format fallback does not make sampling partial or
+limited. Column recommendations remain policy observations and do not prove
+which encoding an archive writer executed.
 
 ## Stable codes
 
 Archive reason codes:
 
 - `ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK`
+- `STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT`
 - `INSUFFICIENT_REPETITION_MAJORITY`
 - `PROJECTED_DICTIONARY_SAVINGS_BELOW_THRESHOLD`
 - `HIGH_REPETITION_DETECTED`
@@ -234,6 +293,9 @@ Every diagnostic contains `code`, `severity`, `message`, and a nullable
 cardinality was censored by an analysis limit; the shared-budget diagnostic
 additionally explains global pressure. Consumers should branch on `code`,
 tolerate unknown codes within V1, and treat messages as human-readable text.
+Header- and record-byte diagnostic messages say `physical` for the legacy
+comma parser and `logical` for an alternate parser; the stable code is the
+machine contract.
 
 ## Privacy
 
@@ -254,6 +316,14 @@ content.
 The report omits planner wall-clock time and orders columns and diagnostics
 deterministically. Compact and pretty modes contain the same JSON value.
 
-Running `datapack analyze INPUT` without `--json` continues to use the frozen
-legacy text renderer. JSON V1 does not change `.dpack` v1/v2 bytes, compression
-defaults, or benchmark methodology.
+Running `datapack analyze INPUT` without `--json` keeps legacy comma text
+unchanged. Alternate-delimiter text adds a `Detected dialect` line and escapes
+control characters in displayed header labels; this presentation does not
+alter facts or input bytes.
+
+Compression and benchmark continue to derive facts from the legacy comma
+analyzer, but Phase 6 adds conservative canonical comma-only eligibility checks
+before structured candidate execution. Inputs not established as comma use
+RawZstd; no alternate facts are routed to an encoder. JSON V1 therefore does
+not change `.dpack` v1/v2 bytes, and alternate-delimiter structured compression
+remains deferred to Phase 7.
