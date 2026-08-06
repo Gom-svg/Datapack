@@ -6,14 +6,20 @@ use crate::metadata::PayloadKind;
 use crate::planning::ArchiveMode;
 use crate::storage;
 
-pub(super) fn encode_for_plan(input: &Path, bytes: &[u8], mode: ArchiveMode) -> Result<Vec<u8>> {
-    Ok(encode_for_plan_detailed(input, bytes, mode)?.0)
+pub(super) fn encode_for_plan(
+    input: &Path,
+    bytes: &[u8],
+    mode: ArchiveMode,
+    delimiter: u8,
+) -> Result<Vec<u8>> {
+    Ok(encode_for_plan_detailed(input, bytes, mode, delimiter)?.0)
 }
 
 pub(super) fn encode_for_plan_detailed(
     input: &Path,
     bytes: &[u8],
     mode: ArchiveMode,
+    delimiter: u8,
 ) -> Result<(Vec<u8>, ArchiveMode, Option<String>)> {
     match mode {
         ArchiveMode::RawZstd => Ok((
@@ -22,18 +28,20 @@ pub(super) fn encode_for_plan_detailed(
             None,
         )),
         ArchiveMode::CsvColumnarDictionary => {
-            if !analysis::comma_structured_compression_eligible_bytes(bytes) {
+            if !analysis::structured_compression_eligible_bytes(bytes, delimiter) {
                 return Ok((
                     storage::encode_raw_zstd_archive(input, bytes)?,
                     ArchiveMode::RawZstd,
                     Some(
-                        "canonical comma structured-compression eligibility was not established"
+                        "canonical structured-compression eligibility was not established for the analyzed delimiter"
                             .to_string(),
                     ),
                 ));
             }
             let (archive, error) =
-                storage::encode_columnar_dictionary_archive_detailed(input, bytes)?;
+                storage::encode_columnar_dictionary_archive_for_delimiter_detailed(
+                    input, bytes, delimiter,
+                )?;
             match archive {
                 Some(archive) => Ok((archive, ArchiveMode::CsvColumnarDictionary, error)),
                 None => Ok((
@@ -56,21 +64,24 @@ pub(super) fn archive_mode_for_payload(payload_kind: &PayloadKind) -> ArchiveMod
 pub(super) fn encode_best_archive(
     input: &Path,
     bytes: &[u8],
+    delimiter: u8,
 ) -> Result<(Vec<u8>, ArchiveMode, usize, Option<String>)> {
     let raw = storage::encode_raw_zstd_archive(input, bytes)?;
-    if !analysis::comma_structured_compression_eligible_bytes(bytes) {
+    if !analysis::structured_compression_eligible_bytes(bytes, delimiter) {
         return Ok((
             raw,
             ArchiveMode::RawZstd,
             0,
             Some(
-                "canonical comma structured-compression eligibility was not established"
+                "canonical structured-compression eligibility was not established for the analyzed delimiter"
                     .to_string(),
             ),
         ));
     }
     let (columnar, columnar_error) =
-        storage::encode_columnar_dictionary_archive_detailed(input, bytes)?;
+        storage::encode_columnar_dictionary_archive_for_delimiter_detailed(
+            input, bytes, delimiter,
+        )?;
     if let Some(columnar) = columnar {
         if columnar.len() < raw.len() {
             let saved = raw.len() - columnar.len();

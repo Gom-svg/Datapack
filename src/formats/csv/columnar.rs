@@ -108,6 +108,15 @@ pub fn compact_id_width(unique_values: usize) -> CompactIdWidth {
 pub fn encode(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
     let text = String::from_utf8_lossy(bytes);
     let delimiter = detect_delimiter(&text) as u8;
+    encode_with_delimiter(bytes, delimiter)
+}
+
+pub(crate) fn encode_with_delimiter(bytes: &[u8], delimiter: u8) -> Result<Option<Vec<u8>>> {
+    if !matches!(delimiter, b',' | b';' | b'\t' | b'|') {
+        return Err(DatapackError::InvalidFormat(format!(
+            "unsupported csv payload delimiter byte {delimiter}"
+        )));
+    }
     let shape = CsvShape::parse(bytes, delimiter)?;
     let mut output = Vec::new();
 
@@ -848,36 +857,78 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_adapter_round_trips_every_dcsv01_delimiter() {
+    fn explicit_delimiter_adapter_round_trips_rich_dcsv01_matrix() {
         for delimiter in [b',', b';', b'\t', b'|'] {
-            let mut input = Vec::new();
-            input.extend_from_slice(b"id");
-            input.push(delimiter);
-            input.extend_from_slice(b"note");
-            input.push(delimiter);
-            input.extend_from_slice(b"status\n1");
-            input.push(delimiter);
-            input.extend_from_slice(b"\"left");
-            input.push(delimiter);
-            input.extend_from_slice(b"right\ncontinued\"");
-            input.push(delimiter);
-            input.extend_from_slice(b"open\n2");
-            input.push(delimiter);
-            input.extend_from_slice(b"\"plain\"");
-            input.push(delimiter);
-            input.extend_from_slice(b"closed");
+            for (newline, final_newline) in [(b"\n".as_slice(), false), (b"\r\n", true)] {
+                let mut input = Vec::new();
+                push_delimited_fields(
+                    &mut input,
+                    delimiter,
+                    [
+                        b"id".as_slice(),
+                        b"code",
+                        b"note",
+                        b"city",
+                        b"empty",
+                        b"space",
+                    ],
+                );
+                input.extend_from_slice(newline);
 
-            let text = std::str::from_utf8(&input).unwrap();
-            assert_eq!(detect_delimiter(text) as u8, delimiter);
-            assert_eq!(
-                CsvSafetyScanner::scan(&input, delimiter),
-                CsvSafety::RequiresRfc4180
-            );
+                push_delimited_fields(&mut input, delimiter, [b"001".as_slice(), b"00042"]);
+                input.push(delimiter);
+                input.extend_from_slice(b"\"  left");
+                input.push(delimiter);
+                input.extend_from_slice(b"right");
+                input.extend_from_slice(newline);
+                input.extend_from_slice(b"continued;|,\t  \"");
+                input.push(delimiter);
+                input.extend_from_slice("東京".as_bytes());
+                input.push(delimiter);
+                input.push(delimiter);
+                input.extend_from_slice(b"  padded  ");
+                input.extend_from_slice(newline);
 
-            let encoded = encode(&input).unwrap().unwrap();
-            assert_eq!(encoded.get(MAGIC.len()), Some(&delimiter));
-            assert_eq!(encoded.get(MAGIC.len() + 2), Some(&0));
-            assert_eq!(decode(&encoded).unwrap(), input);
+                push_delimited_fields(
+                    &mut input,
+                    delimiter,
+                    [
+                        b"002".as_slice(),
+                        b"00007",
+                        b"\"said \"\"hello\"\"\"",
+                        "café".as_bytes(),
+                        b"\"\"",
+                        b"\" spaced \"",
+                    ],
+                );
+                if final_newline {
+                    input.extend_from_slice(newline);
+                }
+
+                assert_eq!(
+                    CsvSafetyScanner::scan(&input, delimiter),
+                    CsvSafety::RequiresRfc4180
+                );
+
+                let encoded = encode_with_delimiter(&input, delimiter).unwrap().unwrap();
+                assert_eq!(&encoded[..MAGIC.len()], MAGIC);
+                assert_eq!(encoded.get(MAGIC.len()), Some(&delimiter));
+                assert_eq!(encoded.get(MAGIC.len() + 2), Some(&u8::from(final_newline)));
+                assert_eq!(decode(&encoded).unwrap(), input);
+            }
+        }
+    }
+
+    fn push_delimited_fields<const N: usize>(
+        output: &mut Vec<u8>,
+        delimiter: u8,
+        fields: [&[u8]; N],
+    ) {
+        for (index, field) in fields.into_iter().enumerate() {
+            if index > 0 {
+                output.push(delimiter);
+            }
+            output.extend_from_slice(field);
         }
     }
 

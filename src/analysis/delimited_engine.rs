@@ -88,7 +88,7 @@ pub(crate) fn comma_structured_compression_eligible_path(
     ))
 }
 
-pub(crate) fn comma_structured_compression_eligible_bytes(bytes: &[u8]) -> bool {
+pub(crate) fn structured_compression_eligible_bytes(bytes: &[u8], delimiter: u8) -> bool {
     if bytes.is_empty() {
         return false;
     }
@@ -102,7 +102,7 @@ pub(crate) fn comma_structured_compression_eligible_bytes(bytes: &[u8]) -> bool 
     };
     matches!(
         detect_dialect(bytes, scan_limits),
-        Ok(DetectionOutcome::Detected(dialect)) if dialect.delimiter == b','
+        Ok(DetectionOutcome::Detected(dialect)) if dialect.delimiter == delimiter
     )
 }
 

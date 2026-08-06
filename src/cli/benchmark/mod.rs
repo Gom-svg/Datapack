@@ -199,7 +199,8 @@ pub(super) fn run(input: PathBuf, options: BenchmarkOptions) -> Result<()> {
     for run_index in 0..runs_used {
         eprintln!("benchmark compress run {}/{}", run_index + 1, runs_used);
         let start = Instant::now();
-        let (archive, mode, error) = encode_for_plan_detailed(&input, &bytes, estimated_mode)?;
+        let (archive, mode, error) =
+            encode_for_plan_detailed(&input, &bytes, estimated_mode, b',')?;
         compression_times.push(start.elapsed());
         progress_phase(
             "benchmark encode+compress",

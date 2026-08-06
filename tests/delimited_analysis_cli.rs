@@ -1,8 +1,10 @@
 use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use datapack::metadata::PayloadKind;
+use datapack::generation::{self, Profile};
+use datapack::metadata::{FileType, PayloadKind};
 use datapack::storage;
 use serde_json::Value;
 
@@ -110,19 +112,13 @@ fn json_v1_reports_all_supported_dialects_consistently_and_privately() {
             .expect("diagnostics array")
             .is_empty());
 
+        assert_eq!(
+            report["planner"]["selection_scope"],
+            "planner_recommendation"
+        );
         if dialect.delimiter == ',' {
-            assert_eq!(
-                report["planner"]["selection_scope"],
-                "planner_recommendation"
-            );
             comma_columns = Some(report["dataset"]["columns"].clone());
         } else {
-            assert_eq!(report["planner"]["selection_scope"], "format_fallback");
-            assert_eq!(report["planner"]["selected_archive_mode"], "raw_zstd");
-            assert_eq!(
-                report["planner"]["reason"]["code"],
-                "STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT"
-            );
             assert_eq!(
                 &report["dataset"]["columns"],
                 comma_columns.as_ref().expect("comma facts recorded"),
@@ -406,18 +402,30 @@ fn alternate_header_detection_never_exceeds_or_disguises_its_bound() {
 }
 
 #[test]
-fn alternate_delimiter_compression_stays_raw_and_byte_exact_in_phase_6() {
+fn supported_delimiter_compression_is_structured_deterministic_and_byte_exact() {
     let modes: [(&str, &[&str]); 3] = [
         ("default", &[]),
         ("best", &["--mode", "best"]),
         ("verify-best", &["--verify-best"]),
     ];
 
-    for dialect in DIALECTS.into_iter().filter(|case| case.delimiter != ',') {
-        let mut input = format!("left{0}middle{0}right,decoy\n", dialect.delimiter);
-        for _ in 0..64 {
-            input.push_str(&format!("fixed{0}same{0}value,tag\n", dialect.delimiter));
-        }
+    let corpus_directory = tempfile::tempdir().expect("temporary repetitive corpus directory");
+    let comma_path = corpus_directory.path().join("repetitive.csv");
+    generation::generate_to_path(Profile::Repetitive, &comma_path, 10_000, Some(42))
+        .expect("generate repetitive structured corpus");
+    let comma_input = fs::read(comma_path).expect("read repetitive structured corpus");
+
+    for dialect in DIALECTS {
+        let input = comma_input
+            .iter()
+            .map(|byte| {
+                if *byte == b',' {
+                    dialect.delimiter as u8
+                } else {
+                    *byte
+                }
+            })
+            .collect::<Vec<_>>();
 
         for (mode, arguments) in modes {
             let directory = tempfile::tempdir().expect("temporary compression directory");
@@ -425,7 +433,7 @@ fn alternate_delimiter_compression_stays_raw_and_byte_exact_in_phase_6() {
             let archive_path = directory
                 .path()
                 .join(format!("{}-{mode}.dpack", dialect.name));
-            fs::write(&input_path, input.as_bytes()).expect("write alternate compression input");
+            fs::write(&input_path, &input).expect("write alternate compression input");
 
             let output = run_compress(&input_path, &archive_path, arguments);
             assert_success(&output);
@@ -434,22 +442,71 @@ fn alternate_delimiter_compression_stays_raw_and_byte_exact_in_phase_6() {
                 storage::decode_archive(&archive_bytes).expect("decode alternate archive");
             assert_eq!(
                 archive.metadata.payload_kind,
-                PayloadKind::RawZstd,
-                "{} {mode} enabled structured compression before Phase 7",
+                PayloadKind::CsvColumnarDictionary,
+                "{} {mode} structured payload",
+                dialect.name
+            );
+            assert_eq!(
+                archive.metadata.original_file_type,
+                if dialect.delimiter == ',' {
+                    FileType::Csv
+                } else {
+                    FileType::Unknown
+                },
+                "{} {mode} path-derived file type",
+                dialect.name
+            );
+            let dcsv = zstd::stream::decode_all(Cursor::new(&archive.payload))
+                .expect("decompress DCSV01 payload");
+            assert_eq!(&dcsv[..6], b"DCSV01", "{} {mode} payload", dialect.name);
+            assert_eq!(
+                dcsv[6], dialect.delimiter as u8,
+                "{} {mode} delimiter byte",
                 dialect.name
             );
             assert_eq!(
                 storage::restore_archive(&archive).expect("restore alternate archive"),
-                input.as_bytes(),
+                input,
                 "{} {mode} restoration",
                 dialect.name
             );
+
+            if mode == "default" {
+                let repeated_path = directory
+                    .path()
+                    .join(format!("{}-{mode}-repeated.dpack", dialect.name));
+                let repeated = run_compress(&input_path, &repeated_path, arguments);
+                assert_success(&repeated);
+                assert_eq!(
+                    fs::read(&repeated_path).expect("read repeated archive"),
+                    archive_bytes,
+                    "{} deterministic v1 output",
+                    dialect.name
+                );
+
+                let restored_path = directory
+                    .path()
+                    .join(format!("{}-{mode}-restored", dialect.name));
+                let decompress = Command::new(env!("CARGO_BIN_EXE_datapack"))
+                    .arg("decompress")
+                    .arg(&archive_path)
+                    .arg(&restored_path)
+                    .output()
+                    .expect("run structured decompression");
+                assert_success(&decompress);
+                assert_eq!(
+                    fs::read(restored_path).expect("read CLI restoration"),
+                    input,
+                    "{} CLI restoration",
+                    dialect.name
+                );
+            }
         }
     }
 }
 
 #[test]
-fn alternate_delimiter_benchmark_cannot_execute_columnar_before_phase_7() {
+fn alternate_delimiter_benchmark_remains_legacy_comma_scoped() {
     let directory = tempfile::tempdir().expect("temporary benchmark directory");
     let input_path = directory.path().join("ambiguous-to-legacy.tsv");
     let mut input = String::from("group\tstatus\tnote,decoy\n");

@@ -81,7 +81,7 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     }
 
     let phase_started = Instant::now();
-    let analysis = match analysis::analyze_path(input, options.sample_mb) {
+    let analysis = match analysis::analyze_cli_path(input, options.sample_mb) {
         Ok(analysis) => analysis,
         Err(DatapackError::InvalidCsv(reason)) => {
             let planning_ms = elapsed_ms(phase_started);
@@ -93,8 +93,7 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
         }
         Err(error) => return Err(error),
     };
-    let comma_structured_eligible = analysis.requires_raw_fallback()
-        || analysis::comma_structured_compression_eligible_path(input, options.sample_mb, None)?;
+    let delimiter = analysis.structured_delimiter();
     let planning_ms = elapsed_ms(phase_started);
     if analysis.requires_raw_fallback() {
         let limitations = analysis
@@ -106,13 +105,6 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
             .join(", ");
         progress_phase("planning", 0, None, phase_started);
         eprintln!("analysis limited ({limitations}); using streaming RawZstd fallback.");
-        return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
-    }
-    if !comma_structured_eligible {
-        progress_phase("planning", 0, None, phase_started);
-        eprintln!(
-            "canonical comma structured-compression eligibility was not established; using streaming RawZstd fallback."
-        );
         return compress_raw_zstd_streaming(input, output, options, total_started, planning_ms);
     }
     let mut plan = analysis.plan.clone();
@@ -137,7 +129,8 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
     let read_ms = elapsed_ms(read_started);
     let phase_started = Instant::now();
     let (archive, selected_mode) = if options.verify_best {
-        let (archive, selected, saved, columnar_error) = encode_best_archive(input, &bytes)?;
+        let (archive, selected, saved, columnar_error) =
+            encode_best_archive(input, &bytes, delimiter)?;
         eprintln!(
             "verify-best: selected {}, saved {saved} bytes over alternative.",
             selected.as_str()
@@ -147,10 +140,10 @@ fn compress_command_inner(input: &Path, output: &Path, options: CompressOptions)
         }
         (archive, selected)
     } else if options.mode == CompressMode::Best && plan.estimated_savings_percent < 15.0 {
-        let (archive, selected, _, _) = encode_best_archive(input, &bytes)?;
+        let (archive, selected, _, _) = encode_best_archive(input, &bytes, delimiter)?;
         (archive, selected)
     } else {
-        let archive = encode_for_plan(input, &bytes, plan.archive_mode)?;
+        let archive = encode_for_plan(input, &bytes, plan.archive_mode, delimiter)?;
         let metadata = storage::read_v1_archive_header(&mut Cursor::new(&archive))?;
         (archive, archive_mode_for_payload(&metadata.payload_kind))
     };

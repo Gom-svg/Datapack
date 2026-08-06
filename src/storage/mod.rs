@@ -75,7 +75,31 @@ pub fn encode_columnar_dictionary_archive_detailed(
     input_path: &std::path::Path,
     original_bytes: &[u8],
 ) -> Result<(Option<Vec<u8>>, Option<String>)> {
-    let encoded_csv = match columnar::encode(original_bytes) {
+    encode_columnar_dictionary_archive_from_payload(
+        input_path,
+        original_bytes,
+        columnar::encode(original_bytes),
+    )
+}
+
+pub(crate) fn encode_columnar_dictionary_archive_for_delimiter_detailed(
+    input_path: &std::path::Path,
+    original_bytes: &[u8],
+    delimiter: u8,
+) -> Result<(Option<Vec<u8>>, Option<String>)> {
+    encode_columnar_dictionary_archive_from_payload(
+        input_path,
+        original_bytes,
+        columnar::encode_with_delimiter(original_bytes, delimiter),
+    )
+}
+
+fn encode_columnar_dictionary_archive_from_payload(
+    input_path: &std::path::Path,
+    original_bytes: &[u8],
+    encoded_csv: Result<Option<Vec<u8>>>,
+) -> Result<(Option<Vec<u8>>, Option<String>)> {
+    let encoded_csv = match encoded_csv {
         Ok(Some(encoded)) => encoded,
         Ok(None) => {
             return Ok((

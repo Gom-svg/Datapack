@@ -10,12 +10,12 @@ mod model;
 mod report;
 
 pub(crate) use delimited_engine::{
-    analyze_cli_path, comma_structured_compression_eligible_bytes,
-    comma_structured_compression_eligible_path,
+    analyze_cli_path, comma_structured_compression_eligible_path,
+    structured_compression_eligible_bytes,
 };
-pub(crate) use engine::{analyze_path, analyze_path_with_scope, DatasetAnalysis};
 #[cfg(test)]
-pub(crate) use engine::{AnalysisEngine, AnalysisLimits, SampleConfig};
+pub(crate) use engine::{analyze_path, AnalysisEngine, AnalysisLimits, SampleConfig};
+pub(crate) use engine::{analyze_path_with_scope, DatasetAnalysis};
 #[cfg(test)]
 pub(crate) use model::AnalysisStopReason;
 pub(crate) use model::{

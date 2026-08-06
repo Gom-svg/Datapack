@@ -6,8 +6,7 @@ use std::time::Instant;
 use super::accumulator::AnalysisAccumulator;
 use super::model::{
     AnalysisCoverage, AnalysisLimitation, AnalysisParser, AnalysisStopReason, DatasetFacts,
-    COMMA_ELIGIBILITY_RAW_FALLBACK_REASON, DELIMITED_FORMAT_RAW_FALLBACK_REASON,
-    LIMITED_RAW_FALLBACK_REASON,
+    COMMA_ELIGIBILITY_RAW_FALLBACK_REASON, LIMITED_RAW_FALLBACK_REASON,
 };
 use crate::error::{DatapackError, Result};
 use crate::formats::delimited::{split_legacy_physical_record, LegacySplitError};
@@ -124,6 +123,13 @@ impl DatasetAnalysis {
         self.plan.archive_mode = ArchiveMode::RawZstd;
         self.plan.reason = COMMA_ELIGIBILITY_RAW_FALLBACK_REASON.to_string();
         self.plan_disposition = PlanDisposition::FormatFallback;
+    }
+
+    pub(crate) const fn structured_delimiter(&self) -> u8 {
+        match self.facts.parser {
+            AnalysisParser::LegacyCsvPhysical => b',',
+            AnalysisParser::CanonicalDelimited(format) => format.delimiter(),
+        }
     }
 }
 
@@ -416,6 +422,7 @@ impl AnalysisEngine {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn analyze_path(path: &Path, sample_mb: u64) -> Result<DatasetAnalysis> {
     AnalysisEngine::new(SampleConfig::from_sample_mb(sample_mb)?).analyze_path(path)
 }
@@ -438,10 +445,6 @@ pub(super) fn finish_analysis(facts: DatasetFacts, started: Instant) -> DatasetA
         plan.archive_mode = ArchiveMode::RawZstd;
         plan.reason = LIMITED_RAW_FALLBACK_REASON.to_string();
         PlanDisposition::AnalysisLimitFallback
-    } else if matches!(facts.parser, AnalysisParser::CanonicalDelimited(_)) {
-        plan.archive_mode = ArchiveMode::RawZstd;
-        plan.reason = DELIMITED_FORMAT_RAW_FALLBACK_REASON.to_string();
-        PlanDisposition::FormatFallback
     } else {
         PlanDisposition::PlannerRecommendation
     };
