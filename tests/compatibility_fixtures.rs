@@ -4,6 +4,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::process::Command;
 
+use datapack::formats::csv::columnar;
 use datapack::metadata::PayloadKind;
 use datapack::storage;
 use sha2::{Digest, Sha256};
@@ -114,6 +115,28 @@ fn legacy_v1_columnar_fixture_remains_byte_exact() {
         V1_COLUMNAR_SOURCE_SHA256,
         V1_COLUMNAR_ARCHIVE_SHA256,
         PayloadKind::CsvColumnarDictionary,
+    );
+
+    let source = read_frozen(
+        "v1_csv_columnar_source.csv",
+        V1_COLUMNAR_SOURCE_SIZE,
+        V1_COLUMNAR_SOURCE_SHA256,
+    );
+    let archive_bytes = read_frozen(
+        "v1_csv_columnar.dpack",
+        V1_COLUMNAR_ARCHIVE_SIZE,
+        V1_COLUMNAR_ARCHIVE_SHA256,
+    );
+    let archive = storage::decode_archive(&archive_bytes).unwrap();
+    let frozen_columnar_payload = zstd::stream::decode_all(Cursor::new(&archive.payload)).unwrap();
+    assert!(frozen_columnar_payload.starts_with(b"DCSV01"));
+
+    let current_columnar_payload = columnar::encode(&source)
+        .unwrap()
+        .expect("frozen source remains eligible for columnar encoding");
+    assert_eq!(
+        current_columnar_payload, frozen_columnar_payload,
+        "public columnar encoder no longer reproduces the frozen v1 DCSV01 payload"
     );
 }
 

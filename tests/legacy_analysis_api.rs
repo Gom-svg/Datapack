@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use datapack::analysis::analyze_bytes;
-use datapack::formats::csv::{ColumnAnalysis, EncodingStrategy, NewlineStyle};
+use datapack::formats::csv::{detect_delimiter, ColumnAnalysis, EncodingStrategy, NewlineStyle};
 use datapack::metadata::{DpackMetadata, ExtensionPoint, FileType, PayloadKind, CURRENT_VERSION};
 
 const TXT_COMPRESSION_NOTE: &str =
@@ -32,6 +32,29 @@ fn public_analysis_signature_and_csv_results_are_stable() {
         1,
         6.0,
         EncodingStrategy::Dictionary,
+    );
+}
+
+#[test]
+fn public_delimiter_ties_and_no_evidence_keep_legacy_last_candidate_behavior() {
+    let tied = "a,b|c\n1,2|3\n";
+    assert_eq!(detect_delimiter(tied), '|');
+    assert_eq!(
+        analyze_bytes(Path::new("tied.csv"), tied.as_bytes())
+            .csv
+            .expect("CSV analysis")
+            .delimiter,
+        '|'
+    );
+
+    let no_evidence = "alpha\nbeta\n";
+    assert_eq!(detect_delimiter(no_evidence), '|');
+    assert_eq!(
+        analyze_bytes(Path::new("no-evidence.csv"), no_evidence.as_bytes())
+            .csv
+            .expect("CSV analysis")
+            .delimiter,
+        '|'
     );
 }
 
