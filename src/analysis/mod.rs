@@ -8,9 +8,9 @@ mod engine;
 mod model;
 mod report;
 
-pub(crate) use engine::{analyze_path, DatasetAnalysis};
+pub(crate) use engine::{analyze_path, analyze_path_with_scope, DatasetAnalysis};
 #[cfg(test)]
-pub(crate) use engine::{AnalysisEngine, SampleConfig};
+pub(crate) use engine::{AnalysisEngine, AnalysisLimits, SampleConfig};
 #[cfg(test)]
 pub(crate) use model::AnalysisStopReason;
 pub(crate) use model::{CardinalityEstimate, DatasetFacts, CARDINALITY_LOWER_BOUND};

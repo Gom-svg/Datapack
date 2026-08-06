@@ -38,10 +38,12 @@ impl PassiveColumnMetrics {
 #[derive(Debug, Clone)]
 pub(super) struct AnalysisAccumulator {
     columns: Vec<ColumnAccumulator>,
+    cardinality_budget: CardinalityBudget,
+    cardinality_memory_limited: bool,
 }
 
 impl AnalysisAccumulator {
-    pub(super) fn new(headers: &[String]) -> Self {
+    pub(super) fn new(headers: &[String], max_cardinality_entries: usize) -> Self {
         let mut first_indices = HashMap::with_capacity(headers.len());
         let columns = headers
             .iter()
@@ -58,21 +60,54 @@ impl AnalysisAccumulator {
                 ColumnAccumulator::new(index, name, name_status)
             })
             .collect();
-        Self { columns }
+        Self {
+            columns,
+            cardinality_budget: CardinalityBudget::new(max_cardinality_entries),
+            cardinality_memory_limited: false,
+        }
     }
 
     pub(super) fn observe(&mut self, fields: &[&str]) {
         debug_assert_eq!(self.columns.len(), fields.len());
         for (column, value) in self.columns.iter_mut().zip(fields.iter().copied()) {
-            column.observe(value);
+            self.cardinality_memory_limited |= column.observe(value, &mut self.cardinality_budget);
         }
     }
 
-    pub(super) fn finish(self) -> Vec<ColumnFacts> {
-        self.columns
+    pub(super) fn finish(self) -> (Vec<ColumnFacts>, bool) {
+        let columns = self
+            .columns
             .into_iter()
             .map(ColumnAccumulator::finish)
-            .collect()
+            .collect();
+        (columns, self.cardinality_memory_limited)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CardinalityBudget {
+    available: usize,
+    capacity: usize,
+}
+
+impl CardinalityBudget {
+    fn new(capacity: usize) -> Self {
+        Self {
+            available: capacity,
+            capacity,
+        }
+    }
+
+    fn reserve(&mut self) -> bool {
+        if self.available == 0 {
+            return false;
+        }
+        self.available -= 1;
+        true
+    }
+
+    fn release(&mut self, entries: usize) {
+        self.available = self.available.saturating_add(entries).min(self.capacity);
     }
 }
 
@@ -87,7 +122,7 @@ struct ColumnAccumulator {
     passive: PassiveColumnMetrics,
     total_value_bytes: u64,
     numeric_values: u64,
-    exceeded_cardinality: bool,
+    cardinality_lower_bound: Option<u64>,
 }
 
 impl ColumnAccumulator {
@@ -102,11 +137,11 @@ impl ColumnAccumulator {
             passive: PassiveColumnMetrics::new(),
             total_value_bytes: 0,
             numeric_values: 0,
-            exceeded_cardinality: false,
+            cardinality_lower_bound: None,
         }
     }
 
-    fn observe(&mut self, value: &str) {
+    fn observe(&mut self, value: &str, budget: &mut CardinalityBudget) -> bool {
         // Keep the legacy mean update and numeric counters in precisely the same
         // order and numeric types used by PlannerPolicyV1 before extraction.
         self.observed_values += 1;
@@ -123,22 +158,39 @@ impl ColumnAccumulator {
         // two bytes rather than a logical empty value.
         self.passive.observe(value_len, value.is_empty());
 
-        if !self.exceeded_cardinality {
-            let hash = stable_hash(&value);
-            if self.unique_hashes.len() < UNIQUE_TRACKING_LIMIT {
-                self.unique_hashes.insert(hash, ());
-            } else if !self.unique_hashes.contains_key(&hash) {
-                self.exceeded_cardinality = true;
-                self.unique_hashes.clear();
-            }
+        if self.cardinality_lower_bound.is_some() {
+            return false;
         }
+        let hash = stable_hash(&value);
+        if self.unique_hashes.contains_key(&hash) {
+            return false;
+        }
+        let retained = self.unique_hashes.len();
+        if retained >= UNIQUE_TRACKING_LIMIT {
+            self.cardinality_lower_bound = Some(CARDINALITY_LOWER_BOUND);
+            self.unique_hashes = HashMap::new();
+            budget.release(retained);
+            return false;
+        }
+        if !budget.reserve() {
+            let retained_lower_bound = u64::try_from(retained)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1);
+            self.cardinality_lower_bound = Some(retained_lower_bound);
+            self.unique_hashes = HashMap::new();
+            budget.release(retained);
+            return true;
+        }
+        self.unique_hashes.insert(hash, ());
+        false
     }
 
     fn finish(self) -> ColumnFacts {
-        let cardinality = if self.exceeded_cardinality {
-            CardinalityEstimate::AtLeast(CARDINALITY_LOWER_BOUND)
-        } else {
-            CardinalityEstimate::Exact(self.unique_hashes.len() as u64)
+        let cardinality = match self.cardinality_lower_bound {
+            Some(lower_bound) => CardinalityEstimate::AtLeast(lower_bound),
+            None => CardinalityEstimate::Exact(
+                u64::try_from(self.unique_hashes.len()).unwrap_or(u64::MAX),
+            ),
         };
         ColumnFacts {
             index: self.index,
@@ -171,9 +223,10 @@ mod tests {
     #[test]
     fn passive_empty_counter_saturates() {
         let mut column = ColumnAccumulator::new(0, "value", ColumnNameStatus::named());
+        let mut budget = CardinalityBudget::new(1);
         column.passive.empty_values = u64::MAX;
 
-        column.observe("");
+        column.observe("", &mut budget);
 
         assert_eq!(column.passive.empty_values, u64::MAX);
     }
@@ -184,5 +237,23 @@ mod tests {
             std::mem::size_of::<PassiveColumnMetrics>(),
             3 * std::mem::size_of::<u64>()
         );
+    }
+
+    #[test]
+    fn censored_tracker_releases_entries_and_allocated_capacity() {
+        let mut column = ColumnAccumulator::new(0, "value", ColumnNameStatus::named());
+        let mut budget = CardinalityBudget::new(2);
+
+        assert!(!column.observe("a", &mut budget));
+        assert!(!column.observe("b", &mut budget));
+        assert!(column.observe("c", &mut budget));
+
+        assert_eq!(column.unique_hashes.len(), 0);
+        assert_eq!(column.unique_hashes.capacity(), 0);
+        assert_eq!(budget.available, 2);
+
+        let mut next_column = ColumnAccumulator::new(1, "next", ColumnNameStatus::named());
+        assert!(!next_column.observe("d", &mut budget));
+        assert_eq!(budget.available, 1);
     }
 }

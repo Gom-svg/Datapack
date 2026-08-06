@@ -6,7 +6,10 @@
 use serde::Serialize;
 
 use super::engine::DatasetAnalysis;
-use super::model::{AnalysisStopReason, CardinalityEstimate, ColumnFacts};
+use super::model::{
+    AnalysisLimitation, AnalysisStopReason, CardinalityEstimate, ColumnFacts,
+    LIMITED_RAW_FALLBACK_REASON,
+};
 use crate::error::{DatapackError, Result};
 use crate::planning::{ArchiveMode, ColumnProfile, ColumnStrategy};
 
@@ -32,7 +35,7 @@ pub(crate) struct AnalysisReportV1<'a> {
 #[derive(Debug, Serialize)]
 struct DatasetReportV1<'a> {
     source_size_bytes: u64,
-    column_count: usize,
+    column_count: Option<usize>,
     parser: ParserReportV1,
     columns: Vec<ColumnReportV1<'a>>,
 }
@@ -123,10 +126,21 @@ enum CompletenessV1 {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
 enum AnalysisLimitV1 {
-    ByteLimit,
-    RecordLimit,
+    #[serde(rename = "byte_limit")]
+    SampleBytes,
+    #[serde(rename = "record_limit")]
+    SampleRecords,
+    #[serde(rename = "header_byte_limit")]
+    HeaderBytes,
+    #[serde(rename = "record_byte_limit")]
+    RecordBytes,
+    #[serde(rename = "column_limit")]
+    Columns,
+    #[serde(rename = "memory_limit")]
+    Memory,
+    #[serde(rename = "cardinality_memory_limit")]
+    CardinalityMemory,
 }
 
 #[derive(Debug, Serialize)]
@@ -215,21 +229,55 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
         .collect::<Result<Vec<_>>>()?;
     let diagnostics = diagnostics(analysis);
     let coverage = &analysis.facts.coverage;
+    let hard_limited = analysis.requires_raw_fallback();
     let (scope, completeness, limited, limit_reached) = match coverage.stop_reason {
         AnalysisStopReason::Complete => {
-            (SamplingScopeV1::Full, CompletenessV1::Complete, false, None)
+            if hard_limited {
+                (
+                    SamplingScopeV1::Full,
+                    CompletenessV1::Partial,
+                    true,
+                    primary_hard_limit(&analysis.facts.limitations),
+                )
+            } else {
+                (SamplingScopeV1::Full, CompletenessV1::Complete, false, None)
+            }
         }
         AnalysisStopReason::ByteLimit => (
             SamplingScopeV1::Sampled,
             CompletenessV1::Partial,
             true,
-            Some(AnalysisLimitV1::ByteLimit),
+            Some(AnalysisLimitV1::SampleBytes),
         ),
         AnalysisStopReason::RecordLimit => (
             SamplingScopeV1::Sampled,
             CompletenessV1::Partial,
             true,
-            Some(AnalysisLimitV1::RecordLimit),
+            Some(AnalysisLimitV1::SampleRecords),
+        ),
+        AnalysisStopReason::HeaderByteLimit => (
+            SamplingScopeV1::Sampled,
+            CompletenessV1::Partial,
+            true,
+            Some(AnalysisLimitV1::HeaderBytes),
+        ),
+        AnalysisStopReason::RecordByteLimit => (
+            SamplingScopeV1::Sampled,
+            CompletenessV1::Partial,
+            true,
+            Some(AnalysisLimitV1::RecordBytes),
+        ),
+        AnalysisStopReason::ColumnLimit => (
+            sampling_scope(coverage),
+            CompletenessV1::Partial,
+            true,
+            Some(AnalysisLimitV1::Columns),
+        ),
+        AnalysisStopReason::MemoryLimit => (
+            sampling_scope(coverage),
+            CompletenessV1::Partial,
+            true,
+            Some(AnalysisLimitV1::Memory),
         ),
     };
     let plan = &analysis.plan;
@@ -239,7 +287,7 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
         report_type: "analysis",
         dataset: DatasetReportV1 {
             source_size_bytes: analysis.facts.source_size_bytes,
-            column_count: analysis.facts.columns.len(),
+            column_count: analysis.facts.observed_column_count,
             parser: ParserReportV1 {
                 format: "csv",
                 delimiter: ",",
@@ -266,7 +314,11 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
                 name: "PlannerPolicyV1",
                 version: 1,
             },
-            selection_scope: "planner_recommendation",
+            selection_scope: if hard_limited {
+                "safe_fallback"
+            } else {
+                "planner_recommendation"
+            },
             candidate_archive_modes: ARCHIVE_CANDIDATES,
             candidate_column_strategies: COLUMN_CANDIDATES,
             selected_archive_mode: archive_mode(plan.archive_mode),
@@ -363,6 +415,19 @@ fn diagnostics(analysis: &DatasetAnalysis) -> Vec<DiagnosticV1> {
             message: "Analysis stopped at the configured record sampling limit.",
             column_index: None,
         }),
+        AnalysisStopReason::HeaderByteLimit
+        | AnalysisStopReason::RecordByteLimit
+        | AnalysisStopReason::ColumnLimit
+        | AnalysisStopReason::MemoryLimit => {}
+    }
+
+    for limitation in &analysis.facts.limitations {
+        diagnostics.push(DiagnosticV1 {
+            code: limitation.code(),
+            severity: DiagnosticSeverityV1::Warning,
+            message: limitation.message(),
+            column_index: None,
+        });
     }
 
     for column in &analysis.facts.columns {
@@ -386,7 +451,7 @@ fn diagnostics(analysis: &DatasetAnalysis) -> Vec<DiagnosticV1> {
             diagnostics.push(DiagnosticV1 {
                 code: "CARDINALITY_LIMIT_REACHED",
                 severity: DiagnosticSeverityV1::Warning,
-                message: "The exact observed cardinality exceeded the tracking limit.",
+                message: "Observed cardinality hash tracking was censored by an analysis limit.",
                 column_index: Some(column.index),
             });
         }
@@ -412,6 +477,7 @@ fn column_strategy(strategy: ColumnStrategy) -> ColumnStrategyV1 {
 
 fn archive_reason_code(reason: &str) -> Option<&'static str> {
     match reason {
+        LIMITED_RAW_FALLBACK_REASON => Some("ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK"),
         "Insufficient repetition across majority of columns for dictionary gains." => {
             Some("INSUFFICIENT_REPETITION_MAJORITY")
         }
@@ -421,6 +487,25 @@ fn archive_reason_code(reason: &str) -> Option<&'static str> {
         _ if reason.starts_with("High repetition detected in ") => Some("HIGH_REPETITION_DETECTED"),
         _ => None,
     }
+}
+
+fn sampling_scope(coverage: &super::model::AnalysisCoverage) -> SamplingScopeV1 {
+    if coverage.bytes_analyzed >= coverage.source_size_bytes {
+        SamplingScopeV1::Full
+    } else {
+        SamplingScopeV1::Sampled
+    }
+}
+
+fn primary_hard_limit(limitations: &[AnalysisLimitation]) -> Option<AnalysisLimitV1> {
+    limitations.first().map(|limitation| match limitation {
+        AnalysisLimitation::IncompleteHeader => AnalysisLimitV1::SampleBytes,
+        AnalysisLimitation::HeaderByteLimit => AnalysisLimitV1::HeaderBytes,
+        AnalysisLimitation::RecordByteLimit => AnalysisLimitV1::RecordBytes,
+        AnalysisLimitation::ColumnLimit => AnalysisLimitV1::Columns,
+        AnalysisLimitation::MemoryLimit => AnalysisLimitV1::Memory,
+        AnalysisLimitation::CardinalityMemoryLimit => AnalysisLimitV1::CardinalityMemory,
+    })
 }
 
 fn column_reason_code(reason: &str) -> Option<&'static str> {
@@ -442,6 +527,10 @@ mod tests {
 
     #[test]
     fn archive_reason_codes_cover_every_planner_policy_v1_branch() {
+        assert_eq!(
+            archive_reason_code(super::LIMITED_RAW_FALLBACK_REASON),
+            Some("ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK")
+        );
         assert_eq!(
             archive_reason_code(
                 "Insufficient repetition across majority of columns for dictionary gains."

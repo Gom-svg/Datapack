@@ -11,7 +11,8 @@ pub mod plan;
 
 #[cfg(test)]
 pub(crate) use crate::analysis::{
-    AnalysisEngine as SampleAnalyzer, DatasetAnalysis as SampleAnalysis, SampleConfig,
+    AnalysisEngine as SampleAnalyzer, AnalysisLimits, DatasetAnalysis as SampleAnalysis,
+    SampleConfig,
 };
 pub use plan::{ArchiveMode, ColumnPlan, ColumnStrategy, CompressionPlan};
 
@@ -54,7 +55,7 @@ impl<'a> PlannerFeaturesV1<'a> {
     }
 
     fn total_file_size(&self) -> u64 {
-        self.facts.source_size_bytes
+        self.facts.coverage.scope_size_bytes
     }
 
     fn columns(&self) -> impl Iterator<Item = PlannerColumnFeaturesV1<'_>> {
@@ -175,11 +176,14 @@ impl PlannerPolicyV1 {
             .iter()
             .filter(|column| column.repetition_rate < 0.10)
             .count();
-        let encoded_size: u64 = columns
+        let encoded_size = columns
             .iter()
             .map(|column| column.estimated_encoded_size)
-            .sum();
-        let raw_size: u64 = columns.iter().map(|column| column.estimated_raw_size).sum();
+            .fold(0u64, u64::saturating_add);
+        let raw_size = columns
+            .iter()
+            .map(|column| column.estimated_raw_size)
+            .fold(0u64, u64::saturating_add);
         let estimated_savings_percent = if raw_size == 0 {
             0.0
         } else {

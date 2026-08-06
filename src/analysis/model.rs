@@ -6,6 +6,8 @@
 
 /// The first distinct value that cannot be retained by the legacy tracker.
 pub(crate) const CARDINALITY_LOWER_BOUND: u64 = 8_193;
+pub(crate) const LIMITED_RAW_FALLBACK_REASON: &str =
+    "Analysis could not safely complete within configured limits; RawZstd fallback required.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CardinalityEstimate {
@@ -41,12 +43,56 @@ pub(crate) enum AnalysisStopReason {
     Complete,
     ByteLimit,
     RecordLimit,
+    HeaderByteLimit,
+    RecordByteLimit,
+    ColumnLimit,
+    MemoryLimit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalysisLimitation {
+    IncompleteHeader,
+    HeaderByteLimit,
+    RecordByteLimit,
+    ColumnLimit,
+    MemoryLimit,
+    CardinalityMemoryLimit,
+}
+
+impl AnalysisLimitation {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::IncompleteHeader => "INCOMPLETE_HEADER_SAMPLE",
+            Self::HeaderByteLimit => "HEADER_BYTE_LIMIT_REACHED",
+            Self::RecordByteLimit => "RECORD_BYTE_LIMIT_REACHED",
+            Self::ColumnLimit => "COLUMN_LIMIT_REACHED",
+            Self::MemoryLimit => "ANALYSIS_MEMORY_LIMIT_REACHED",
+            Self::CardinalityMemoryLimit => "CARDINALITY_MEMORY_LIMIT_REACHED",
+        }
+    }
+
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::IncompleteHeader => {
+                "The header did not fit within the configured analysis scope."
+            }
+            Self::HeaderByteLimit => "The first physical record exceeded the header byte limit.",
+            Self::RecordByteLimit => "A physical data record exceeded the record byte limit.",
+            Self::ColumnLimit => "The header exceeded the maximum supported analysis column count.",
+            Self::MemoryLimit => "Analysis stopped at the internal memory accounting limit.",
+            Self::CardinalityMemoryLimit => {
+                "Cardinality tracking reached the shared analysis memory budget."
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AnalysisCoverage {
     pub(crate) source_size_bytes: u64,
-    /// Bytes read by the legacy sampler, including its characterized overshoot.
+    /// Source prefix that this consumer asked the analyzer to model.
+    pub(crate) scope_size_bytes: u64,
+    /// Bytes consumed by the bounded sampler.
     pub(crate) bytes_read: u64,
     /// Bytes whose line structure and fields were actually analyzed.
     pub(crate) bytes_analyzed: u64,
@@ -82,6 +128,9 @@ pub(crate) struct ColumnFacts {
 pub(crate) struct DatasetFacts {
     pub(crate) input_name: String,
     pub(crate) source_size_bytes: u64,
+    /// Exact physical header width when the complete header was available.
+    pub(crate) observed_column_count: Option<usize>,
     pub(crate) coverage: AnalysisCoverage,
     pub(crate) columns: Vec<ColumnFacts>,
+    pub(crate) limitations: Vec<AnalysisLimitation>,
 }
