@@ -3,11 +3,11 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::compression::planned::archive_mode_for_payload;
 use crate::error::{DatapackError, Result};
 use crate::metadata::{DpackMetadata, PayloadKind};
 use crate::storage;
 
-use super::archive::archive_mode_for_payload;
 use super::profile::{
     duration_ms, elapsed_ms, mb_per_second_u64, print_chunked_profile, print_direct_profile,
     DirectProfile,

@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::analysis;
+use crate::compression::planned::{archive_mode_for_payload, encode_best_archive, encode_for_plan};
 use crate::error::{DatapackError, Result};
 use crate::planning::{self, ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
-use super::archive::{archive_mode_for_payload, encode_best_archive, encode_for_plan};
 use super::chunked_options::{
     build_chunked_compress_options, validate_backend_support, validate_chunk_size,
     validate_compression_memory_limit, validate_max_in_flight_chunks, validate_thread_count,

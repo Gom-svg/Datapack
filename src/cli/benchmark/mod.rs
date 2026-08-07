@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::analysis;
+use crate::compression::planned::encode_for_plan_detailed;
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::planning::{ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
-use super::archive::encode_for_plan_detailed;
 use super::chunked_options::build_chunked_compress_options;
 use super::profile::{duration_ms, elapsed_ms, mb_per_second};
 use super::progress::{progress_phase, read_prefix_buffered_progress, IO_BUFFER_BYTES};

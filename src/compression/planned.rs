@@ -6,7 +6,7 @@ use crate::metadata::PayloadKind;
 use crate::planning::{ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
-pub(super) fn encode_for_plan(
+pub(crate) fn encode_for_plan(
     input: &Path,
     bytes: &[u8],
     mode: ArchiveMode,
@@ -16,7 +16,7 @@ pub(super) fn encode_for_plan(
     Ok(encode_for_plan_detailed(input, bytes, mode, delimiter, execution_plan)?.0)
 }
 
-pub(super) fn encode_for_plan_detailed(
+pub(crate) fn encode_for_plan_detailed(
     input: &Path,
     bytes: &[u8],
     mode: ArchiveMode,
@@ -58,14 +58,14 @@ pub(super) fn encode_for_plan_detailed(
     }
 }
 
-pub(super) fn archive_mode_for_payload(payload_kind: &PayloadKind) -> ArchiveMode {
+pub(crate) fn archive_mode_for_payload(payload_kind: &PayloadKind) -> ArchiveMode {
     match payload_kind {
         PayloadKind::CsvColumnarDictionary => ArchiveMode::CsvColumnarDictionary,
         PayloadKind::RawZstd | PayloadKind::Plain | PayloadKind::Dictionary => ArchiveMode::RawZstd,
     }
 }
 
-pub(super) fn encode_best_archive(
+pub(crate) fn encode_best_archive(
     input: &Path,
     bytes: &[u8],
     delimiter: u8,
