@@ -13,6 +13,7 @@ fn structured_cli_surface_is_stable() {
         subcommand_names(&root),
         string_set(&[
             "analyze",
+            "advisor",
             "benchmark",
             "compare",
             "compress",
@@ -35,6 +36,22 @@ fn structured_cli_surface_is_stable() {
         .expect_err("--pretty must require --json");
     assert_eq!(
         pretty_without_json.kind(),
+        ErrorKind::MissingRequiredArgument
+    );
+
+    let advisor = subcommand(&root, "advisor");
+    assert_eq!(
+        long_flags(advisor),
+        string_set(&["json", "pretty", "sample-mb"])
+    );
+    assert_eq!(default_values(advisor), string_map(&[("sample-mb", "64")]));
+    assert!(value_enums(advisor).is_empty());
+
+    let advisor_pretty_without_json =
+        Cli::try_parse_from(["datapack", "advisor", "input.csv", "--pretty"])
+            .expect_err("advisor --pretty must require --json");
+    assert_eq!(
+        advisor_pretty_without_json.kind(),
         ErrorKind::MissingRequiredArgument
     );
 
