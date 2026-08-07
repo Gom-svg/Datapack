@@ -3,6 +3,7 @@
 pub mod analysis;
 mod archive_validation;
 pub mod cli;
+mod comparison;
 pub mod compression;
 pub mod encoding;
 pub mod error;

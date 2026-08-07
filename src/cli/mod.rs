@@ -10,9 +10,9 @@ use crate::tuning;
 
 mod analysis_json;
 mod analysis_report;
-mod archive;
 mod benchmark;
 mod chunked_options;
+mod compare;
 mod compress;
 mod decompress;
 mod profile;
@@ -148,6 +148,25 @@ enum Command {
         #[arg(long, default_value_t = DEFAULT_VALIDATE_MAX_MEMORY_MB)]
         max_memory_mb: u64,
     },
+    /// Compare DataPack with standalone zstd using factual measurements.
+    Compare {
+        input: PathBuf,
+        /// Comparison scope: bounded Quick mode or complete Full mode.
+        #[arg(long, value_enum, default_value_t = CompareModeArg::Quick)]
+        mode: CompareModeArg,
+        /// Number of timing runs, from 1 to 25.
+        #[arg(long, default_value_t = 3)]
+        runs: usize,
+        /// Compare at most the first N MiB in Quick mode.
+        #[arg(long)]
+        max_input_mb: Option<u64>,
+        /// Emit a versioned machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+        /// Pretty-print JSON output. Requires --json.
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
     /// Generate deterministic fictitious CSV benchmark data.
     GenerateTestData {
         /// Profile: repetitive, realistic, high-cardinality, or random.
@@ -270,6 +289,21 @@ enum ChunkedBackendArg {
     ZstdMtExperimental,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CompareModeArg {
+    Quick,
+    Full,
+}
+
+impl From<CompareModeArg> for crate::comparison::ComparisonMode {
+    fn from(value: CompareModeArg) -> Self {
+        match value {
+            CompareModeArg::Quick => Self::Quick,
+            CompareModeArg::Full => Self::Full,
+        }
+    }
+}
+
 impl ChunkedBackendArg {
     fn storage_backend(self) -> storage::chunked::ChunkedBackend {
         match self {
@@ -375,6 +409,23 @@ pub fn run(cli: Cli) -> Result<()> {
                 max_chunks,
                 max_memory_mb,
             },
+        ),
+        Command::Compare {
+            input,
+            mode,
+            runs,
+            max_input_mb,
+            json,
+            pretty,
+        } => compare::run(
+            input,
+            crate::comparison::CompareOptions {
+                mode: mode.into(),
+                runs,
+                max_input_mb,
+            },
+            json,
+            pretty,
         ),
         Command::GenerateTestData {
             profile,
