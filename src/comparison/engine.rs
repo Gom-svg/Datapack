@@ -394,7 +394,7 @@ fn prepare_datapack(input: &Path, input_size: u64) -> Result<PreparedDataPack> {
             return Ok(PreparedDataPack {
                 encoding: DataPackEncoding::RawZstd,
                 limitations: vec![ComparisonLimitationV1::new(
-                    "STRUCTURED_ANALYSIS_UNAVAILABLE",
+                    analysis::STRUCTURED_ANALYSIS_UNAVAILABLE_CODE,
                     "Structured analysis was unavailable; DataPack used RawZstd.",
                 )],
             });

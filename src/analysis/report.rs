@@ -416,24 +416,15 @@ fn column_report<'a>(
 
 fn diagnostics(analysis: &DatasetAnalysis) -> Vec<DiagnosticV1> {
     let mut diagnostics = Vec::new();
-    match analysis.facts.coverage.stop_reason {
-        AnalysisStopReason::Complete => {}
-        AnalysisStopReason::ByteLimit => diagnostics.push(DiagnosticV1 {
-            code: "SAMPLE_BYTE_LIMIT_REACHED",
+    if let Some((code, message)) =
+        analysis_stop_reason_diagnostic(analysis.facts.coverage.stop_reason)
+    {
+        diagnostics.push(DiagnosticV1 {
+            code,
             severity: DiagnosticSeverityV1::Warning,
-            message: "Analysis stopped at the configured byte sampling limit.",
+            message,
             column_index: None,
-        }),
-        AnalysisStopReason::RecordLimit => diagnostics.push(DiagnosticV1 {
-            code: "SAMPLE_RECORD_LIMIT_REACHED",
-            severity: DiagnosticSeverityV1::Warning,
-            message: "Analysis stopped at the configured record sampling limit.",
-            column_index: None,
-        }),
-        AnalysisStopReason::HeaderByteLimit
-        | AnalysisStopReason::RecordByteLimit
-        | AnalysisStopReason::ColumnLimit
-        | AnalysisStopReason::MemoryLimit => {}
+        });
     }
 
     for limitation in &analysis.facts.limitations {
@@ -490,7 +481,7 @@ fn column_strategy(strategy: ColumnStrategy) -> ColumnStrategyV1 {
     }
 }
 
-fn archive_reason_code(reason: &str) -> Option<&'static str> {
+pub(crate) fn archive_reason_code(reason: &str) -> Option<&'static str> {
     match reason {
         LIMITED_RAW_FALLBACK_REASON => Some("ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK"),
         DELIMITED_FORMAT_RAW_FALLBACK_REASON => {
@@ -504,6 +495,33 @@ fn archive_reason_code(reason: &str) -> Option<&'static str> {
         }
         _ if reason.starts_with("High repetition detected in ") => Some("HIGH_REPETITION_DETECTED"),
         _ => None,
+    }
+}
+
+pub(crate) const fn analysis_stop_reason_code(reason: AnalysisStopReason) -> Option<&'static str> {
+    match analysis_stop_reason_diagnostic(reason) {
+        Some((code, _)) => Some(code),
+        None => None,
+    }
+}
+
+const fn analysis_stop_reason_diagnostic(
+    reason: AnalysisStopReason,
+) -> Option<(&'static str, &'static str)> {
+    match reason {
+        AnalysisStopReason::Complete => None,
+        AnalysisStopReason::ByteLimit => Some((
+            "SAMPLE_BYTE_LIMIT_REACHED",
+            "Analysis stopped at the configured byte sampling limit.",
+        )),
+        AnalysisStopReason::RecordLimit => Some((
+            "SAMPLE_RECORD_LIMIT_REACHED",
+            "Analysis stopped at the configured record sampling limit.",
+        )),
+        AnalysisStopReason::HeaderByteLimit
+        | AnalysisStopReason::RecordByteLimit
+        | AnalysisStopReason::ColumnLimit
+        | AnalysisStopReason::MemoryLimit => None,
     }
 }
 
@@ -526,7 +544,7 @@ fn primary_hard_limit(limitations: &[AnalysisLimitation]) -> Option<AnalysisLimi
     })
 }
 
-fn column_reason_code(reason: &str) -> Option<&'static str> {
+pub(crate) fn column_reason_code(reason: &str) -> Option<&'static str> {
     match reason {
         "Exceeded cardinality threshold" => Some("CARDINALITY_THRESHOLD_EXCEEDED"),
         "Very low cardinality with high repetition" => Some("VERY_LOW_CARDINALITY_HIGH_REPETITION"),

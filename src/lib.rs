@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod advisor;
 pub mod analysis;
 mod archive_validation;
 pub mod cli;

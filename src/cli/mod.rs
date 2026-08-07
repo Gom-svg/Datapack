@@ -8,6 +8,7 @@ use crate::generation::{self, Profile};
 use crate::storage;
 use crate::tuning;
 
+mod advisor;
 mod analysis_json;
 mod analysis_report;
 mod benchmark;
@@ -160,6 +161,19 @@ enum Command {
         /// Compare at most the first N MiB in Quick mode.
         #[arg(long)]
         max_input_mb: Option<u64>,
+        /// Emit a versioned machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+        /// Pretty-print JSON output. Requires --json.
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
+    /// Provide deterministic advice from existing analysis facts and policy.
+    Advisor {
+        input: PathBuf,
+        /// Maximum sample size in MB, from 1 to 2048.
+        #[arg(long, default_value_t = DEFAULT_SAMPLE_MB)]
+        sample_mb: u64,
         /// Emit a versioned machine-readable JSON report.
         #[arg(long)]
         json: bool,
@@ -427,6 +441,12 @@ pub fn run(cli: Cli) -> Result<()> {
             json,
             pretty,
         ),
+        Command::Advisor {
+            input,
+            sample_mb,
+            json,
+            pretty,
+        } => advisor::run(input, sample_mb, json, pretty),
         Command::GenerateTestData {
             profile,
             output,
