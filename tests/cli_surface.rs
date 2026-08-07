@@ -14,6 +14,7 @@ fn structured_cli_surface_is_stable() {
         string_set(&[
             "analyze",
             "benchmark",
+            "compare",
             "compress",
             "decompress",
             "generate-test-data",
@@ -90,6 +91,25 @@ fn structured_cli_surface_is_stable() {
     );
     assert!(default_values(decompress).is_empty());
     assert!(value_enums(decompress).is_empty());
+
+    let compare = subcommand(&root, "compare");
+    assert_eq!(
+        long_flags(compare),
+        string_set(&["json", "max-input-mb", "mode", "pretty", "runs"])
+    );
+    assert_eq!(
+        default_values(compare),
+        string_map(&[("mode", "quick"), ("runs", "3")])
+    );
+    assert_eq!(value_enums(compare), string_map(&[("mode", "full|quick")]));
+
+    let compare_pretty_without_json =
+        Cli::try_parse_from(["datapack", "compare", "input.csv", "--pretty"])
+            .expect_err("compare --pretty must require --json");
+    assert_eq!(
+        compare_pretty_without_json.kind(),
+        ErrorKind::MissingRequiredArgument
+    );
 
     let validate = subcommand(&root, "validate");
     assert_eq!(
