@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use crate::planning::ArchiveMode;
 use crate::storage;
 
@@ -17,32 +15,6 @@ pub(super) struct DirectProfile<'a> {
     pub(super) write_ms: Option<u64>,
     pub(super) total_ms: u64,
     pub(super) throughput_mb_per_sec: f64,
-}
-
-pub(super) fn elapsed_ms(started: Instant) -> u64 {
-    duration_ms(started.elapsed())
-}
-
-pub(super) fn duration_ms(duration: Duration) -> u64 {
-    duration.as_millis() as u64
-}
-
-pub(super) fn mb_per_second(bytes: usize, duration: Duration) -> f64 {
-    let seconds = duration.as_secs_f64();
-    if seconds <= 0.0 {
-        0.0
-    } else {
-        bytes as f64 / 1_048_576.0 / seconds
-    }
-}
-
-pub(super) fn mb_per_second_u64(bytes: u64, duration: Duration) -> f64 {
-    let seconds = duration.as_secs_f64();
-    if seconds <= 0.0 {
-        0.0
-    } else {
-        bytes as f64 / 1_048_576.0 / seconds
-    }
 }
 
 pub(super) fn ratio(original_size: u64, compressed_size: u64) -> f64 {

@@ -2,7 +2,9 @@
 
 mod advisor;
 pub mod analysis;
+pub mod application;
 mod archive_validation;
+mod benchmark;
 pub mod cli;
 mod comparison;
 pub mod compression;

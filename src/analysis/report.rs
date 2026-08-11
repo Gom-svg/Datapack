@@ -23,73 +23,82 @@ const COLUMN_CANDIDATES: [ColumnStrategyV1; 4] = [
 ];
 
 #[derive(Debug, Serialize)]
-pub(crate) struct AnalysisReportV1<'a> {
-    schema_version: u32,
-    report_type: &'static str,
-    dataset: DatasetReportV1<'a>,
-    sampling: SamplingReportV1,
-    planner: PlannerReportV1<'a>,
-    diagnostics: Vec<DiagnosticV1>,
+#[non_exhaustive]
+pub struct AnalysisReportV1 {
+    pub schema_version: u32,
+    pub report_type: &'static str,
+    pub dataset: DatasetReportV1,
+    pub sampling: SamplingReportV1,
+    pub planner: PlannerReportV1,
+    pub diagnostics: Vec<DiagnosticV1>,
 }
 
 #[derive(Debug, Serialize)]
-struct DatasetReportV1<'a> {
-    source_size_bytes: u64,
-    column_count: Option<usize>,
-    parser: ParserReportV1,
-    columns: Vec<ColumnReportV1<'a>>,
+#[non_exhaustive]
+pub struct DatasetReportV1 {
+    pub source_size_bytes: u64,
+    pub column_count: Option<usize>,
+    pub parser: ParserReportV1,
+    pub columns: Vec<ColumnReportV1>,
 }
 
 #[derive(Debug, Serialize)]
-struct ParserReportV1 {
-    format: &'static str,
-    delimiter: &'static str,
-    record_model: &'static str,
-    header_mode: &'static str,
+#[non_exhaustive]
+pub struct ParserReportV1 {
+    pub format: &'static str,
+    pub delimiter: &'static str,
+    pub record_model: &'static str,
+    pub header_mode: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-struct ColumnReportV1<'a> {
-    index: usize,
-    name_status: ColumnNameStatusReportV1,
-    observed_values: u64,
-    empty_values: u64,
-    numeric_values: u64,
-    value_length_bytes: ValueLengthReportV1,
-    cardinality: EstimateU64ReportV1,
-    repetition_rate: EstimateF64ReportV1,
-    planner: ColumnPlannerReportV1<'a>,
+#[non_exhaustive]
+pub struct ColumnReportV1 {
+    pub index: usize,
+    pub name_status: ColumnNameStatusReportV1,
+    pub observed_values: u64,
+    pub empty_values: u64,
+    pub numeric_values: u64,
+    pub value_length_bytes: ValueLengthReportV1,
+    pub cardinality: EstimateU64ReportV1,
+    pub repetition_rate: EstimateF64ReportV1,
+    pub planner: ColumnPlannerReportV1,
 }
 
 #[derive(Debug, Serialize)]
-struct ColumnNameStatusReportV1 {
-    is_empty: bool,
-    duplicate_of: Option<usize>,
+#[non_exhaustive]
+pub struct ColumnNameStatusReportV1 {
+    pub is_empty: bool,
+    pub duplicate_of: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
-struct ValueLengthReportV1 {
-    minimum: Option<u64>,
-    maximum: Option<u64>,
-    mean: Option<f64>,
-    total: u64,
+#[non_exhaustive]
+pub struct ValueLengthReportV1 {
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+    pub mean: Option<f64>,
+    pub total: u64,
 }
 
 #[derive(Debug, Serialize)]
-struct EstimateU64ReportV1 {
-    kind: EstimateKindV1,
-    value: Option<u64>,
+#[non_exhaustive]
+pub struct EstimateU64ReportV1 {
+    pub kind: EstimateKindV1,
+    pub value: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
-struct EstimateF64ReportV1 {
-    kind: EstimateKindV1,
-    value: Option<f64>,
+#[non_exhaustive]
+pub struct EstimateF64ReportV1 {
+    pub kind: EstimateKindV1,
+    pub value: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum EstimateKindV1 {
+#[non_exhaustive]
+pub enum EstimateKindV1 {
     Exact,
     AtLeast,
     #[allow(dead_code)] // Reserved by the V1 contract for future bounded analysis.
@@ -97,36 +106,40 @@ enum EstimateKindV1 {
 }
 
 #[derive(Debug, Serialize)]
-struct SamplingReportV1 {
-    scope: SamplingScopeV1,
-    completeness: CompletenessV1,
-    limited: bool,
-    limit_reached: Option<AnalysisLimitV1>,
-    source_size_bytes: u64,
-    bytes_read: u64,
-    bytes_analyzed: u64,
-    records_analyzed: u64,
-    configured_max_bytes: u64,
-    configured_max_records: u64,
-    final_newline: Option<bool>,
+#[non_exhaustive]
+pub struct SamplingReportV1 {
+    pub scope: SamplingScopeV1,
+    pub completeness: CompletenessV1,
+    pub limited: bool,
+    pub limit_reached: Option<AnalysisLimitV1>,
+    pub source_size_bytes: u64,
+    pub bytes_read: u64,
+    pub bytes_analyzed: u64,
+    pub records_analyzed: u64,
+    pub configured_max_bytes: u64,
+    pub configured_max_records: u64,
+    pub final_newline: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum SamplingScopeV1 {
+#[non_exhaustive]
+pub enum SamplingScopeV1 {
     Full,
     Sampled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum CompletenessV1 {
+#[non_exhaustive]
+pub enum CompletenessV1 {
     Complete,
     Partial,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-enum AnalysisLimitV1 {
+#[non_exhaustive]
+pub enum AnalysisLimitV1 {
     #[serde(rename = "byte_limit")]
     SampleBytes,
     #[serde(rename = "record_limit")]
@@ -144,48 +157,54 @@ enum AnalysisLimitV1 {
 }
 
 #[derive(Debug, Serialize)]
-struct PlannerReportV1<'a> {
-    policy: PolicyReportV1,
-    selection_scope: &'static str,
-    candidate_archive_modes: [ArchiveModeV1; 2],
-    candidate_column_strategies: [ColumnStrategyV1; 4],
-    selected_archive_mode: ArchiveModeV1,
-    reason: ReasonReportV1<'a>,
-    estimated_savings_percent: f32,
-    estimated_dictionary_memory_mib: f32,
+#[non_exhaustive]
+pub struct PlannerReportV1 {
+    pub policy: PolicyReportV1,
+    pub selection_scope: &'static str,
+    pub candidate_archive_modes: [ArchiveModeV1; 2],
+    pub candidate_column_strategies: [ColumnStrategyV1; 4],
+    pub selected_archive_mode: ArchiveModeV1,
+    pub reason: ReasonReportV1,
+    pub estimated_savings_percent: f32,
+    pub estimated_dictionary_memory_mib: f32,
 }
 
 #[derive(Debug, Serialize)]
-struct PolicyReportV1 {
-    name: &'static str,
-    version: u32,
+#[non_exhaustive]
+pub struct PolicyReportV1 {
+    pub name: &'static str,
+    pub version: u32,
 }
 
 #[derive(Debug, Serialize)]
-struct ColumnPlannerReportV1<'a> {
-    selected_strategy: ColumnStrategyV1,
-    reason: ReasonReportV1<'a>,
-    estimated_dictionary_size_kib: u64,
-    estimated_encoded_size_bytes: u64,
-    estimated_raw_size_bytes: u64,
+#[non_exhaustive]
+pub struct ColumnPlannerReportV1 {
+    pub selected_strategy: ColumnStrategyV1,
+    pub reason: ReasonReportV1,
+    pub estimated_dictionary_size_kib: u64,
+    pub estimated_encoded_size_bytes: u64,
+    pub estimated_raw_size_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
-struct ReasonReportV1<'a> {
-    code: &'static str,
-    message: &'a str,
+#[non_exhaustive]
+pub struct ReasonReportV1 {
+    pub code: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ArchiveModeV1 {
+#[non_exhaustive]
+pub enum ArchiveModeV1 {
     CsvColumnarDictionary,
     RawZstd,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ColumnStrategyV1 {
+#[non_exhaustive]
+pub enum ColumnStrategyV1 {
     Dictionary,
     Plain,
     DeltaCandidate,
@@ -193,20 +212,22 @@ enum ColumnStrategyV1 {
 }
 
 #[derive(Debug, Serialize)]
-struct DiagnosticV1 {
-    code: &'static str,
-    severity: DiagnosticSeverityV1,
-    message: &'static str,
-    column_index: Option<usize>,
+#[non_exhaustive]
+pub struct DiagnosticV1 {
+    pub code: &'static str,
+    pub severity: DiagnosticSeverityV1,
+    pub message: &'static str,
+    pub column_index: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum DiagnosticSeverityV1 {
+#[non_exhaustive]
+pub enum DiagnosticSeverityV1 {
     Warning,
 }
 
-pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisReportV1<'_>> {
+pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisReportV1> {
     if analysis.facts.columns.len() != analysis.columns.len()
         || analysis
             .facts
@@ -324,7 +345,7 @@ pub(crate) fn build_report_v1(analysis: &DatasetAnalysis) -> Result<AnalysisRepo
                             .to_string(),
                     )
                 })?,
-                message: &plan.reason,
+                message: plan.reason.clone(),
             },
             estimated_savings_percent: plan.estimated_savings_percent,
             estimated_dictionary_memory_mib: plan.estimated_memory_mb,
@@ -353,10 +374,7 @@ fn parser_report(parser: AnalysisParser) -> ParserReportV1 {
     }
 }
 
-fn column_report<'a>(
-    facts: &ColumnFacts,
-    profile: &'a ColumnProfile,
-) -> Result<ColumnReportV1<'a>> {
+fn column_report(facts: &ColumnFacts, profile: &ColumnProfile) -> Result<ColumnReportV1> {
     let cardinality = match facts.cardinality {
         CardinalityEstimate::Exact(value) => EstimateU64ReportV1 {
             kind: EstimateKindV1::Exact,
@@ -405,7 +423,7 @@ fn column_report<'a>(
                             .to_string(),
                     )
                 })?,
-                message: &profile.reason,
+                message: profile.reason.clone(),
             },
             estimated_dictionary_size_kib: profile.estimated_dict_size_kb,
             estimated_encoded_size_bytes: profile.estimated_encoded_size,

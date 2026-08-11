@@ -1,11 +1,9 @@
-use std::fmt::Write as _;
-use std::path::PathBuf;
-
-use crate::comparison::{self, CompareOptions, ComparisonReportV1, CompetitorReportV1};
+use crate::application::{self, CompareRequest, ComparisonReportV1, CompetitorReportV1};
 use crate::error::{DatapackError, Result};
+use std::fmt::Write as _;
 
-pub(super) fn run(input: PathBuf, options: CompareOptions, json: bool, pretty: bool) -> Result<()> {
-    let report = comparison::compare_path(&input, options)?;
+pub(super) fn run(request: CompareRequest, json: bool, pretty: bool) -> Result<()> {
+    let report = application::compare(request)?;
     if json {
         print_json(&report, pretty)
     } else {

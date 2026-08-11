@@ -262,6 +262,34 @@ pub struct ChunkedProfile {
     pub zstd_level_distribution: Vec<(i32, u64)>,
 }
 
+/// Raw progress facts emitted by the v2 chunked storage pipeline.
+///
+/// This stays crate-private so the application API can translate storage
+/// details into its stable progress contract without exposing wire-layer
+/// implementation details. Callbacks are invoked only by the caller thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChunkedProgress {
+    Compression {
+        chunks_read: u64,
+        chunks_compressed: u64,
+        chunks_written: u64,
+        total_chunks: u64,
+        bytes_read: u64,
+        bytes_compressed: u64,
+        bytes_written: u64,
+        total_bytes: u64,
+        archive_bytes_written: u64,
+        max_in_flight_chunks: usize,
+        zstd_level: i32,
+    },
+    Decompression {
+        chunks_completed: u64,
+        total_chunks: u64,
+        bytes_written: u64,
+        total_bytes: u64,
+    },
+}
+
 struct ChunkWork {
     chunk_id: u64,
     original_offset: u64,
@@ -346,6 +374,16 @@ pub fn encode_raw_zstd_chunked_file(
     output_path: &Path,
     options: ChunkedCompressOptions,
 ) -> Result<ChunkedStats> {
+    encode_raw_zstd_chunked_file_with_progress(input_path, output_path, options, &mut |_| {})
+        .map(|(stats, _)| stats)
+}
+
+pub(crate) fn encode_raw_zstd_chunked_file_with_progress(
+    input_path: &Path,
+    output_path: &Path,
+    options: ChunkedCompressOptions,
+    progress: &mut dyn FnMut(ChunkedProgress),
+) -> Result<(ChunkedStats, Option<String>)> {
     ensure_distinct_paths(
         input_path,
         output_path,
@@ -372,7 +410,6 @@ pub fn encode_raw_zstd_chunked_file(
     write_v2_header_and_table(&mut output, original_size, [0u8; 32], chunk_size, &chunks)?;
     let mut table_write_duration = table_started.elapsed();
 
-    let started = Instant::now();
     let counters = Arc::new(PipelineCounters::default());
     let (reader_summary, accumulator) = run_compression_pipeline(
         input_file,
@@ -383,7 +420,7 @@ pub fn encode_raw_zstd_chunked_file(
         chunk_count,
         options,
         Arc::clone(&counters),
-        started,
+        progress,
     )?;
 
     output.flush()?;
@@ -400,7 +437,7 @@ pub fn encode_raw_zstd_chunked_file(
     table_write_duration += table_started.elapsed();
     let archive_size = output.get_ref().metadata()?.len();
     drop(output);
-    temp_guard.commit(output_path, options.force)?;
+    let cleanup_warning = temp_guard.commit_with_cleanup_warning(output_path, options.force)?;
 
     let mut zstd_level_distribution: Vec<_> = accumulator.zstd_levels.into_iter().collect();
     zstd_level_distribution.sort_by_key(|(level, _)| *level);
@@ -428,33 +465,36 @@ pub fn encode_raw_zstd_chunked_file(
         .reduce(f64::max)
         .unwrap_or(0.0);
 
-    Ok(ChunkedStats {
-        original_size_bytes: original_size,
-        archive_size_bytes: archive_size,
-        chunk_count,
-        chunk_size_target: chunk_size,
-        profile: ChunkedProfile {
-            backend: options.backend.as_str().to_string(),
-            threads: options.threads,
-            max_in_flight_chunks: options.max_in_flight_chunks,
-            adaptive_level: options.adaptive_level,
-            read_ms: duration_ms_u64(reader_summary.read_duration),
-            hash_ms: duration_ms_u64(reader_summary.hash_duration + accumulator.hash_duration),
-            compress_ms: duration_ms_u64(accumulator.compress_duration),
-            write_ms: duration_ms_u64(accumulator.write_duration),
-            table_write_ms: duration_ms_u64(table_write_duration),
-            total_elapsed_ms: duration_ms_u64(total_started.elapsed()),
-            average_chunk_transform_ms,
-            fastest_chunk_ms,
-            slowest_chunk_ms,
-            average_compressed_chunk_size: accumulator
-                .compressed_bytes
-                .checked_div(chunk_count)
-                .unwrap_or(0),
-            zstd_level_distribution,
-            ..ChunkedProfile::default()
+    Ok((
+        ChunkedStats {
+            original_size_bytes: original_size,
+            archive_size_bytes: archive_size,
+            chunk_count,
+            chunk_size_target: chunk_size,
+            profile: ChunkedProfile {
+                backend: options.backend.as_str().to_string(),
+                threads: options.threads,
+                max_in_flight_chunks: options.max_in_flight_chunks,
+                adaptive_level: options.adaptive_level,
+                read_ms: duration_ms_u64(reader_summary.read_duration),
+                hash_ms: duration_ms_u64(reader_summary.hash_duration + accumulator.hash_duration),
+                compress_ms: duration_ms_u64(accumulator.compress_duration),
+                write_ms: duration_ms_u64(accumulator.write_duration),
+                table_write_ms: duration_ms_u64(table_write_duration),
+                total_elapsed_ms: duration_ms_u64(total_started.elapsed()),
+                average_chunk_transform_ms,
+                fastest_chunk_ms,
+                slowest_chunk_ms,
+                average_compressed_chunk_size: accumulator
+                    .compressed_bytes
+                    .checked_div(chunk_count)
+                    .unwrap_or(0),
+                zstd_level_distribution,
+                ..ChunkedProfile::default()
+            },
         },
-    })
+        cleanup_warning,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -467,7 +507,7 @@ fn run_compression_pipeline<W: Write + Seek>(
     chunk_count: u64,
     options: ChunkedCompressOptions,
     counters: Arc<PipelineCounters>,
-    started: Instant,
+    progress: &mut dyn FnMut(ChunkedProgress),
 ) -> Result<(ReaderSummary, CompressionAccumulator)> {
     std::thread::scope(|scope| {
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -542,7 +582,7 @@ fn run_compression_pipeline<W: Write + Seek>(
             &result_receiver,
             &permit_sender,
             &counters,
-            started,
+            progress,
         );
 
         cancelled.store(true, Ordering::Release);
@@ -714,7 +754,7 @@ fn write_compressed_chunks<W: Write + Seek>(
     result_receiver: &mpsc::Receiver<PipelineMessage>,
     permit_sender: &mpsc::SyncSender<()>,
     counters: &PipelineCounters,
-    started: Instant,
+    progress: &mut dyn FnMut(ChunkedProgress),
 ) -> Result<(ReaderSummary, CompressionAccumulator)> {
     let mut reorder_buffer = BTreeMap::new();
     let mut next_chunk_id = 0u64;
@@ -808,19 +848,14 @@ fn write_compressed_chunks<W: Write + Seek>(
                         .bytes_written
                         .fetch_add(original_chunk_size, Ordering::Relaxed);
                     let _ = permit_sender.send(());
-                    log_pipeline_progress(
+                    progress(compression_progress(
                         counters,
                         chunk_count,
                         original_size,
                         next_compressed_offset,
                         options.max_in_flight_chunks,
-                        started,
-                        if options.profile {
-                            Some(chunk.zstd_level)
-                        } else {
-                            None
-                        },
-                    );
+                        chunk.zstd_level,
+                    ));
                     next_chunk_id = next_chunk_id.checked_add(1).ok_or_else(|| {
                         DatapackError::InvalidFormat("chunk id overflow during write".to_string())
                     })?;
@@ -847,6 +882,16 @@ pub fn decode_raw_zstd_chunked_file(
     output_path: &Path,
     options: ChunkedDecompressOptions,
 ) -> Result<ChunkedStats> {
+    decode_raw_zstd_chunked_file_with_progress(input_path, output_path, options, &mut |_| {})
+        .map(|(stats, _)| stats)
+}
+
+pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
+    input_path: &Path,
+    output_path: &Path,
+    options: ChunkedDecompressOptions,
+    progress: &mut dyn FnMut(ChunkedProgress),
+) -> Result<(ChunkedStats, Option<String>)> {
     ensure_distinct_paths(
         input_path,
         output_path,
@@ -870,7 +915,6 @@ pub fn decode_raw_zstd_chunked_file(
     let mut output = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
     let mut global_hasher = Sha256::new();
     let mut restored_size = 0u64;
-    let started = Instant::now();
     let mut read_duration = Duration::ZERO;
     let mut decompress_duration = Duration::ZERO;
     let mut write_duration = Duration::ZERO;
@@ -967,15 +1011,12 @@ pub fn decode_raw_zstd_chunked_file(
                 "restored output size overflowed u64 during decompression".to_string(),
             )
         })?;
-        log_chunk_progress(
-            "chunked-decompress",
-            chunk.chunk_id,
-            archive_info.chunk_count,
-            restored_size,
-            archive_info.original_size_bytes,
-            started,
-            None,
-        );
+        progress(ChunkedProgress::Decompression {
+            chunks_completed: chunk.chunk_id.saturating_add(1),
+            total_chunks: archive_info.chunk_count,
+            bytes_written: restored_size,
+            total_bytes: archive_info.original_size_bytes,
+        });
     }
 
     if restored_size != archive_info.original_size_bytes {
@@ -1000,7 +1041,7 @@ pub fn decode_raw_zstd_chunked_file(
     output.flush()?;
     write_duration += write_started.elapsed();
     drop(output);
-    temp_guard.commit(output_path, options.force)?;
+    let cleanup_warning = temp_guard.commit_with_cleanup_warning(output_path, options.force)?;
 
     let chunk_total = chunk_durations.len() as f64;
     let average_chunk_transform_ms = if chunk_total == 0.0 {
@@ -1019,28 +1060,31 @@ pub fn decode_raw_zstd_chunked_file(
         .reduce(f64::max)
         .unwrap_or(0.0);
 
-    Ok(ChunkedStats {
-        original_size_bytes: archive_info.original_size_bytes,
-        archive_size_bytes: archive_size,
-        chunk_count: archive_info.chunk_count,
-        chunk_size_target: archive_info.chunk_size_target,
-        profile: ChunkedProfile {
-            backend: "v2-raw-zstd-frame".to_string(),
-            verify_enabled: options.verify,
-            read_ms: duration_ms_u64(read_duration),
-            decompress_ms: duration_ms_u64(decompress_duration),
-            write_ms: duration_ms_u64(write_duration),
-            verify_ms: duration_ms_u64(verify_duration),
-            total_elapsed_ms: duration_ms_u64(total_started.elapsed()),
-            average_chunk_transform_ms,
-            fastest_chunk_ms,
-            slowest_chunk_ms,
-            average_compressed_chunk_size: archive_size
-                .checked_div(archive_info.chunk_count)
-                .unwrap_or(0),
-            ..ChunkedProfile::default()
+    Ok((
+        ChunkedStats {
+            original_size_bytes: archive_info.original_size_bytes,
+            archive_size_bytes: archive_size,
+            chunk_count: archive_info.chunk_count,
+            chunk_size_target: archive_info.chunk_size_target,
+            profile: ChunkedProfile {
+                backend: "v2-raw-zstd-frame".to_string(),
+                verify_enabled: options.verify,
+                read_ms: duration_ms_u64(read_duration),
+                decompress_ms: duration_ms_u64(decompress_duration),
+                write_ms: duration_ms_u64(write_duration),
+                verify_ms: duration_ms_u64(verify_duration),
+                total_elapsed_ms: duration_ms_u64(total_started.elapsed()),
+                average_chunk_transform_ms,
+                fastest_chunk_ms,
+                slowest_chunk_ms,
+                average_compressed_chunk_size: archive_size
+                    .checked_div(archive_info.chunk_count)
+                    .unwrap_or(0),
+                ..ChunkedProfile::default()
+            },
         },
-    })
+        cleanup_warning,
+    ))
 }
 
 /// Validates every format-provided integrity guarantee of a v2 archive without
@@ -1774,84 +1818,104 @@ fn normalized_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized_parent.join(file_name))
 }
 
-fn log_pipeline_progress(
+fn compression_progress(
     counters: &PipelineCounters,
     chunk_count: u64,
     total_bytes: u64,
     archive_bytes_written: u64,
     max_in_flight_chunks: usize,
-    started: Instant,
-    zstd_level: Option<i32>,
-) {
-    let chunks_read = counters.chunks_read.load(Ordering::Relaxed);
-    let chunks_compressed = counters.chunks_compressed.load(Ordering::Relaxed);
-    let chunks_written = counters.chunks_written.load(Ordering::Relaxed);
-    let bytes_read = counters.bytes_read.load(Ordering::Relaxed);
-    let bytes_compressed = counters.bytes_compressed.load(Ordering::Relaxed);
-    let bytes_written = counters.bytes_written.load(Ordering::Relaxed);
-    let elapsed = started.elapsed().as_secs_f64().max(0.001);
-    let throughput = bytes_written as f64 / 1_048_576.0 / elapsed;
-    let percent = if total_bytes == 0 {
-        100.0
-    } else {
-        bytes_written as f64 * 100.0 / total_bytes as f64
-    };
-    let eta_seconds = if bytes_written < total_bytes && throughput > 0.0 {
-        (total_bytes - bytes_written) as f64 / 1_048_576.0 / throughput
-    } else {
-        0.0
-    };
-    let in_flight = chunks_read.saturating_sub(chunks_written);
-    let level = zstd_level
-        .map(|value| format!(" zstd_level={value}"))
-        .unwrap_or_default();
-    eprintln!(
-        "phase=chunked-compress chunks_read={chunks_read} chunks_compressed={chunks_compressed} chunks_written={chunks_written}/{chunk_count} read_mb={:.2} compressed_mb={:.2} archive_written_mb={:.2} percent={percent:.1}% elapsed={elapsed:.1}s eta={eta_seconds:.1}s throughput={throughput:.2} MB/s in_flight={in_flight}/{max_in_flight_chunks}{level}",
-        bytes_read as f64 / 1_048_576.0,
-        bytes_compressed as f64 / 1_048_576.0,
-        archive_bytes_written as f64 / 1_048_576.0,
-    );
+    zstd_level: i32,
+) -> ChunkedProgress {
+    ChunkedProgress::Compression {
+        chunks_read: counters.chunks_read.load(Ordering::Relaxed),
+        chunks_compressed: counters.chunks_compressed.load(Ordering::Relaxed),
+        chunks_written: counters.chunks_written.load(Ordering::Relaxed),
+        total_chunks: chunk_count,
+        bytes_read: counters.bytes_read.load(Ordering::Relaxed),
+        bytes_compressed: counters.bytes_compressed.load(Ordering::Relaxed),
+        bytes_written: counters.bytes_written.load(Ordering::Relaxed),
+        total_bytes,
+        archive_bytes_written,
+        max_in_flight_chunks,
+        zstd_level,
+    }
 }
 
-fn log_chunk_progress(
-    phase: &str,
-    chunk_id: u64,
-    chunk_count: u64,
-    processed_bytes: u64,
-    total_bytes: u64,
-    started: Instant,
-    zstd_level: Option<i32>,
-) {
-    let elapsed = started.elapsed().as_secs_f64().max(0.001);
-    let mb = processed_bytes as f64 / 1_048_576.0;
-    let total_mb = total_bytes as f64 / 1_048_576.0;
-    let throughput = mb / elapsed;
-    let bytes_per_second = processed_bytes as f64 / elapsed;
-    let eta_seconds = if processed_bytes < total_bytes && bytes_per_second > 0.0 {
-        (total_bytes - processed_bytes) as f64 / bytes_per_second
-    } else {
-        0.0
-    };
-    match zstd_level {
-        Some(level) => eprintln!(
-            "phase={phase} chunk={}/{} mb={:.2}/{:.2} elapsed={:.1}s eta={:.1}s throughput={:.2} MB/s zstd_level={level}",
-            chunk_id + 1,
-            chunk_count,
-            mb,
-            total_mb,
-            elapsed,
-            eta_seconds,
-            throughput
-        ),
-        None => eprintln!(
-            "phase={phase} chunk={}/{} mb={:.2}/{:.2} elapsed={:.1}s eta={:.1}s throughput={:.2} MB/s",
-            chunk_id + 1,
-            chunk_count,
-            mb,
-            total_mb,
-            elapsed,
-            eta_seconds,
-            throughput
-        ),
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn progress_hooks_report_monotonic_chunk_completion_on_the_caller_thread() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let input = directory.path().join("input.bin");
+        let archive = directory.path().join("archive.dpack");
+        let restored = directory.path().join("restored.bin");
+        let original = b"0123456789";
+        std::fs::write(&input, original).expect("write input");
+
+        let caller_thread = std::thread::current().id();
+        let mut compression_events = Vec::new();
+        let options = ChunkedCompressOptions::new_with_max_in_flight(4, 2, 4, false, false)
+            .expect("compression options");
+        let (stats, cleanup_warning) =
+            encode_raw_zstd_chunked_file_with_progress(&input, &archive, options, &mut |event| {
+                assert_eq!(std::thread::current().id(), caller_thread);
+                compression_events.push(event);
+            })
+            .expect("encode archive");
+
+        assert_eq!(cleanup_warning, None);
+        assert_eq!(stats.chunk_count, 3);
+        assert_eq!(compression_events.len(), 3);
+        for (index, event) in compression_events.iter().enumerate() {
+            let ChunkedProgress::Compression {
+                chunks_written,
+                total_chunks,
+                bytes_written,
+                total_bytes,
+                archive_bytes_written,
+                ..
+            } = event
+            else {
+                panic!("compression emitted a decompression event");
+            };
+            assert_eq!(*chunks_written, index as u64 + 1);
+            assert_eq!(*total_chunks, 3);
+            assert_eq!(*bytes_written, ((index + 1) * 4).min(original.len()) as u64);
+            assert_eq!(*total_bytes, original.len() as u64);
+            assert!(*archive_bytes_written > 0);
+        }
+
+        let mut decompression_events = Vec::new();
+        let (_, cleanup_warning) = decode_raw_zstd_chunked_file_with_progress(
+            &archive,
+            &restored,
+            ChunkedDecompressOptions::default(),
+            &mut |event| {
+                assert_eq!(std::thread::current().id(), caller_thread);
+                decompression_events.push(event);
+            },
+        )
+        .expect("decode archive");
+
+        assert_eq!(cleanup_warning, None);
+        assert_eq!(decompression_events.len(), 3);
+        for (index, event) in decompression_events.iter().enumerate() {
+            let ChunkedProgress::Decompression {
+                chunks_completed,
+                total_chunks,
+                bytes_written,
+                total_bytes,
+            } = event
+            else {
+                panic!("decompression emitted a compression event");
+            };
+            assert_eq!(*chunks_completed, index as u64 + 1);
+            assert_eq!(*total_chunks, 3);
+            assert_eq!(*bytes_written, ((index + 1) * 4).min(original.len()) as u64);
+            assert_eq!(*total_bytes, original.len() as u64);
+        }
+        assert_eq!(std::fs::read(&restored).expect("read restored"), original);
     }
 }

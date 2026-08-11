@@ -25,6 +25,14 @@ pub(crate) use model::{
 pub(crate) use report::{
     analysis_stop_reason_code, archive_reason_code, build_report_v1, column_reason_code,
 };
+pub use report::{
+    AnalysisLimitV1, AnalysisReportV1, ArchiveModeV1 as AnalysisArchiveModeV1,
+    ColumnNameStatusReportV1, ColumnPlannerReportV1, ColumnReportV1,
+    ColumnStrategyV1 as AnalysisColumnStrategyV1, CompletenessV1, DatasetReportV1,
+    DiagnosticSeverityV1, DiagnosticV1, EstimateF64ReportV1, EstimateKindV1, EstimateU64ReportV1,
+    ParserReportV1, PlannerReportV1, PolicyReportV1, ReasonReportV1, SamplingReportV1,
+    SamplingScopeV1, ValueLengthReportV1,
+};
 
 pub fn analyze_bytes(path: &Path, bytes: &[u8]) -> DpackMetadata {
     let file_type = FileType::from_path(path);

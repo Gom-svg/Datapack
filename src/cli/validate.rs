@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::archive_validation::{self, CheckStatusV1, ValidationOptions, ValidationReportV1};
+use crate::application::{self, CheckStatusV1, ValidateRequest, ValidationReportV1};
 use crate::error::{DatapackError, Result};
 
 use super::validation::{
@@ -20,18 +20,13 @@ pub(super) fn run(archive: PathBuf, options: ValidateOptions) -> Result<()> {
         ));
     }
 
-    let report = archive_validation::validate_path(
-        &archive,
-        options.against.as_deref(),
-        ValidationOptions {
-            max_output_bytes: optional_megabytes_to_bytes(
-                "--max-output-mb",
-                options.max_output_mb,
-            )?,
-            max_chunks: options.max_chunks,
-            max_memory_bytes: megabytes_to_bytes("--max-memory-mb", options.max_memory_mb)?,
-        },
-    )?;
+    let report = application::validate(ValidateRequest {
+        archive,
+        against: options.against,
+        max_output_bytes: optional_megabytes_to_bytes("--max-output-mb", options.max_output_mb)?,
+        max_chunks: options.max_chunks,
+        max_memory_bytes: megabytes_to_bytes("--max-memory-mb", options.max_memory_mb)?,
+    })?;
 
     if options.json {
         print_json(&report, options.pretty)?;

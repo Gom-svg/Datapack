@@ -6,16 +6,6 @@ use crate::metadata::PayloadKind;
 use crate::planning::{ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
-pub(crate) fn encode_for_plan(
-    input: &Path,
-    bytes: &[u8],
-    mode: ArchiveMode,
-    delimiter: u8,
-    execution_plan: &ColumnExecutionPlan,
-) -> Result<Vec<u8>> {
-    Ok(encode_for_plan_detailed(input, bytes, mode, delimiter, execution_plan)?.0)
-}
-
 pub(crate) fn encode_for_plan_detailed(
     input: &Path,
     bytes: &[u8],

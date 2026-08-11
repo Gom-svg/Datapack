@@ -1,8 +1,7 @@
-//! Internal archive-validation service and versioned report boundary.
+//! Internal archive-validation engine and public versioned report boundary.
 //!
-//! The public application API is introduced in a later modernization phase.
-//! Keeping this module crate-private lets the CLI use a non-terminal engine
-//! without prematurely committing the internal storage types as public API.
+//! The path-based application service re-exports the stable report DTOs while
+//! keeping validation options and storage implementation details crate-private.
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -27,29 +26,32 @@ pub(crate) struct ValidationOptions {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ValidationReportV1 {
-    pub(crate) schema_version: u32,
-    pub(crate) report_type: &'static str,
-    pub(crate) valid: bool,
-    pub(crate) archive: ArchiveReportV1,
-    pub(crate) checks: ValidationChecksV1,
-    pub(crate) against: AgainstReportV1,
-    pub(crate) diagnostics: Vec<ValidationDiagnosticV1>,
+#[non_exhaustive]
+pub struct ValidationReportV1 {
+    pub schema_version: u32,
+    pub report_type: &'static str,
+    pub valid: bool,
+    pub archive: ArchiveReportV1,
+    pub checks: ValidationChecksV1,
+    pub against: AgainstReportV1,
+    pub diagnostics: Vec<ValidationDiagnosticV1>,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ArchiveReportV1 {
-    pub(crate) version: Option<u16>,
-    pub(crate) format: Option<ArchiveFormatV1>,
-    pub(crate) archive_size_bytes: u64,
-    pub(crate) original_size_bytes: Option<u64>,
-    pub(crate) payload_mode: Option<PayloadModeV1>,
-    pub(crate) chunk_count: Option<u64>,
+#[non_exhaustive]
+pub struct ArchiveReportV1 {
+    pub version: Option<u16>,
+    pub format: Option<ArchiveFormatV1>,
+    pub archive_size_bytes: u64,
+    pub original_size_bytes: Option<u64>,
+    pub payload_mode: Option<PayloadModeV1>,
+    pub chunk_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ArchiveFormatV1 {
+#[non_exhaustive]
+pub enum ArchiveFormatV1 {
     DpackV1,
     DpackV2,
 }
@@ -65,7 +67,8 @@ impl ArchiveFormatV1 {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PayloadModeV1 {
+#[non_exhaustive]
+pub enum PayloadModeV1 {
     RawZstd,
     CsvColumnarDictionary,
     ChunkedRawZstd,
@@ -82,21 +85,23 @@ impl PayloadModeV1 {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ValidationChecksV1 {
-    pub(crate) header: CheckStatusV1,
-    pub(crate) metadata: CheckStatusV1,
-    pub(crate) payload_structure: CheckStatusV1,
-    pub(crate) decompression: CheckStatusV1,
-    pub(crate) restored_length: CheckStatusV1,
-    pub(crate) chunk_table: CheckStatusV1,
-    pub(crate) per_chunk_sha256: CheckStatusV1,
-    pub(crate) global_sha256: CheckStatusV1,
-    pub(crate) trailing_data: CheckStatusV1,
+#[non_exhaustive]
+pub struct ValidationChecksV1 {
+    pub header: CheckStatusV1,
+    pub metadata: CheckStatusV1,
+    pub payload_structure: CheckStatusV1,
+    pub decompression: CheckStatusV1,
+    pub restored_length: CheckStatusV1,
+    pub chunk_table: CheckStatusV1,
+    pub per_chunk_sha256: CheckStatusV1,
+    pub global_sha256: CheckStatusV1,
+    pub trailing_data: CheckStatusV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CheckStatusV1 {
+#[non_exhaustive]
+pub enum CheckStatusV1 {
     Passed,
     Failed,
     NotAvailable,
@@ -117,14 +122,16 @@ impl CheckStatusV1 {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct AgainstReportV1 {
-    pub(crate) status: AgainstStatusV1,
-    pub(crate) source_size_bytes: Option<u64>,
+#[non_exhaustive]
+pub struct AgainstReportV1 {
+    pub status: AgainstStatusV1,
+    pub source_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgainstStatusV1 {
+#[non_exhaustive]
+pub enum AgainstStatusV1 {
     NotRequested,
     Matched,
     Mismatched,
@@ -143,15 +150,17 @@ impl AgainstStatusV1 {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ValidationDiagnosticV1 {
-    pub(crate) code: &'static str,
-    pub(crate) severity: ValidationSeverityV1,
-    pub(crate) message: String,
+#[non_exhaustive]
+pub struct ValidationDiagnosticV1 {
+    pub code: &'static str,
+    pub severity: ValidationSeverityV1,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ValidationSeverityV1 {
+#[non_exhaustive]
+pub enum ValidationSeverityV1 {
     Error,
 }
 

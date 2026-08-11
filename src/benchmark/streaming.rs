@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -11,24 +11,20 @@ use crate::error::{DatapackError, Result};
 use crate::planning::ArchiveMode;
 use crate::storage;
 
-use super::super::chunked_options::build_chunked_compress_options;
-use super::super::profile::{duration_ms, elapsed_ms, mb_per_second_u64};
-use super::super::progress::{ProgressReader, ProgressWriter, IO_BUFFER_BYTES};
-use super::super::BenchmarkOptions;
 use super::model::{
     benchmark_partial_reasons, benchmark_scope, compression_ratio_u64, median_duration,
-    validation_status, BenchmarkMetrics, ChunkedBenchmarkMetrics, ProfileTimings,
+    validation_status, BenchmarkArtifacts, BenchmarkEvent, BenchmarkExecution, BenchmarkMetrics,
+    BenchmarkNotice, BenchmarkRequest, ChunkedBenchmarkMetrics, ProfileTimings,
 };
-use super::report::{print_benchmark_json, print_benchmark_table, print_profile_timings};
-use super::temp::{
-    benchmark_chunked_restore_path, benchmark_chunked_sample_path, benchmark_chunked_temp_path,
-    benchmark_restore_path, benchmark_temp_path, benchmark_zstd_temp_path, BenchmarkTempFiles,
+use super::temp::{BenchmarkTempFiles, BenchmarkTempPaths};
+use super::{
+    build_chunked_compress_options, duration_ms, elapsed_ms, mb_per_second_u64,
+    BenchmarkProgressReporter, IO_BUFFER_BYTES,
 };
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn run(
-    input: PathBuf,
-    options: BenchmarkOptions,
+pub(super) fn execute(
+    options: BenchmarkRequest,
     analysis: DatasetAnalysis,
     source_size: u64,
     benchmark_input_size: u64,
@@ -36,30 +32,25 @@ pub(super) fn run(
     runs_used: usize,
     total_started: Instant,
     mut profile_timings: ProfileTimings,
-) -> Result<()> {
-    eprintln!("benchmark execution path: streaming RawZstd");
+    events: &mut dyn FnMut(BenchmarkEvent),
+) -> Result<BenchmarkExecution> {
+    events(BenchmarkEvent::Notice(
+        BenchmarkNotice::StreamingRawZstdExecution,
+    ));
+    let input = &options.input;
     let hash_enabled = !options.no_hash && !options.no_roundtrip;
-    let temp_path = benchmark_temp_path(&input);
-    let restore_path = benchmark_restore_path(&input);
-    let zstd_temp_path = benchmark_zstd_temp_path(&input);
-    let chunked_temp_path = benchmark_chunked_temp_path(&input);
-    let chunked_restore_path = benchmark_chunked_restore_path(&input);
-    let chunked_sample_path = benchmark_chunked_sample_path(&input);
-    let _temp_files = BenchmarkTempFiles::new(
-        options.keep_temp,
-        vec![
-            temp_path.clone(),
-            restore_path.clone(),
-            zstd_temp_path.clone(),
-            chunked_temp_path.clone(),
-            chunked_restore_path.clone(),
-            chunked_sample_path.clone(),
-        ],
-    );
+    let temp_paths = BenchmarkTempPaths::new(input);
+    let temp_path = temp_paths.datapack.clone();
+    let restore_path = temp_paths.restore.clone();
+    let zstd_temp_path = temp_paths.zstd.clone();
+    let chunked_temp_path = temp_paths.chunked.clone();
+    let chunked_restore_path = temp_paths.chunked_restore.clone();
+    let chunked_sample_path = temp_paths.chunked_sample.clone();
+    let _temp_files = BenchmarkTempFiles::new(options.keep_temp, temp_paths.owned_paths());
 
     let original_hash = if hash_enabled {
         let started = Instant::now();
-        let hash = sha256_path_prefix(&input, benchmark_input_size, "benchmark hash input")?;
+        let hash = sha256_path_prefix(input, benchmark_input_size, "benchmark hash input", events)?;
         profile_timings.hash_ms = Some(elapsed_ms(started));
         Some(hash)
     } else {
@@ -71,10 +62,11 @@ pub(super) fn run(
     if !options.no_zstd_baseline {
         let started = Instant::now();
         zstd_only_size = write_zstd_prefix(
-            &input,
+            input,
             &zstd_temp_path,
             benchmark_input_size,
             "benchmark zstd-only",
+            events,
         )?;
         let duration = started.elapsed();
         profile_timings.zstd_only_ms = Some(duration_ms(duration));
@@ -84,13 +76,17 @@ pub(super) fn run(
     let mut compression_times = Vec::with_capacity(runs_used);
     let mut datapack_size = 0u64;
     for run_index in 0..runs_used {
-        eprintln!("benchmark compress run {}/{}", run_index + 1, runs_used);
+        events(BenchmarkEvent::Notice(BenchmarkNotice::CompressRun {
+            run: run_index + 1,
+            total_runs: runs_used,
+        }));
         let started = Instant::now();
         datapack_size = write_raw_zstd_prefix(
-            &input,
+            input,
             &temp_path,
             benchmark_input_size,
             "benchmark raw-zstd compress",
+            events,
         )?;
         compression_times.push(started.elapsed());
     }
@@ -98,9 +94,17 @@ pub(super) fn run(
     let mut decompression_times = Vec::with_capacity(runs_used);
     if !options.no_roundtrip {
         for run_index in 0..runs_used {
-            eprintln!("benchmark decompress run {}/{}", run_index + 1, runs_used);
+            events(BenchmarkEvent::Notice(BenchmarkNotice::DecompressRun {
+                run: run_index + 1,
+                total_runs: runs_used,
+            }));
             let started = Instant::now();
-            restore_v1_raw_path(&temp_path, &restore_path, "benchmark raw-zstd decompress")?;
+            restore_v1_raw_path(
+                &temp_path,
+                &restore_path,
+                "benchmark raw-zstd decompress",
+                events,
+            )?;
             decompression_times.push(started.elapsed());
         }
     } else {
@@ -113,6 +117,7 @@ pub(super) fn run(
             &restore_path,
             benchmark_input_size,
             "benchmark hash restored",
+            events,
         )?;
         profile_timings.hash_ms = Some(
             profile_timings
@@ -142,23 +147,17 @@ pub(super) fn run(
     if options.uses_chunked() {
         let chunked_input = if input_sampled {
             copy_path_prefix(
-                &input,
+                input,
                 &chunked_sample_path,
                 benchmark_input_size,
                 "benchmark write input prefix",
+                events,
             )?;
             chunked_sample_path.as_path()
         } else {
             input.as_path()
         };
-        let mut chunk_options = build_chunked_compress_options(
-            options.chunk_size_mb,
-            options.threads,
-            options.max_in_flight_chunks,
-            options.backend,
-            options.adaptive_level,
-            options.profile,
-        )?;
+        let mut chunk_options = build_chunked_compress_options(&options)?;
         chunk_options.force = true;
         chunk_options.keep_temp = options.keep_temp;
         let mut chunked_compression_times = Vec::with_capacity(runs_used);
@@ -167,11 +166,12 @@ pub(super) fn run(
         let mut chunked_roundtrip_sha256_match = None;
 
         for run_index in 0..runs_used {
-            eprintln!(
-                "benchmark chunked RawZstd compress run {}/{}",
-                run_index + 1,
-                runs_used
-            );
+            events(BenchmarkEvent::Notice(
+                BenchmarkNotice::ChunkedCompressRun {
+                    run: run_index + 1,
+                    total_runs: runs_used,
+                },
+            ));
             let started = Instant::now();
             let stats = storage::chunked::encode_raw_zstd_chunked_file(
                 chunked_input,
@@ -184,11 +184,12 @@ pub(super) fn run(
 
         if !options.no_roundtrip {
             for run_index in 0..runs_used {
-                eprintln!(
-                    "benchmark chunked RawZstd decompress run {}/{}",
-                    run_index + 1,
-                    runs_used
-                );
+                events(BenchmarkEvent::Notice(
+                    BenchmarkNotice::ChunkedDecompressRun {
+                        run: run_index + 1,
+                        total_runs: runs_used,
+                    },
+                ));
                 let started = Instant::now();
                 storage::chunked::decode_raw_zstd_chunked_file(
                     &chunked_temp_path,
@@ -285,42 +286,44 @@ pub(super) fn run(
             original_hash.as_deref(),
         )?
         .to_string(),
-        partial_reasons: benchmark_partial_reasons(&options, input_sampled).join("; "),
+        partial_reasons: benchmark_partial_reasons(&options, input_sampled),
         no_roundtrip: options.no_roundtrip,
         no_hash: options.no_hash,
     };
     profile_timings.total_elapsed_ms = Some(elapsed_ms(total_started));
 
-    if options.json {
-        print_benchmark_json(&metrics);
-    } else {
-        print_benchmark_table(&metrics);
-        println!("mode                     RawZstd");
-        if options.keep_temp {
-            println!("temp_artifact             {}", temp_path.display());
-            if !options.no_zstd_baseline {
-                println!("zstd_temp_artifact        {}", zstd_temp_path.display());
-            }
-            if options.uses_chunked() {
-                println!("chunked_temp_artifact     {}", chunked_temp_path.display());
-            }
+    let artifacts = if options.keep_temp {
+        BenchmarkArtifacts {
+            datapack: Some(temp_path),
+            restore: (!options.no_roundtrip).then_some(restore_path),
+            zstd: (!options.no_zstd_baseline).then_some(zstd_temp_path),
+            chunked: options.uses_chunked().then_some(chunked_temp_path),
+            chunked_restore: (options.uses_chunked() && !options.no_roundtrip)
+                .then_some(chunked_restore_path),
+            chunked_sample: (options.uses_chunked() && input_sampled)
+                .then_some(chunked_sample_path),
         }
-    }
-    if options.profile {
-        print_profile_timings(&profile_timings);
-    }
-    Ok(())
+    } else {
+        BenchmarkArtifacts::default()
+    };
+    Ok(BenchmarkExecution::Measured {
+        metrics: Box::new(metrics),
+        profile_timings,
+        mode_label: "RawZstd".to_string(),
+        artifacts,
+    })
 }
 
 fn write_raw_zstd_prefix(
     input_path: &Path,
     output_path: &Path,
     input_size: u64,
-    phase: &str,
+    phase: &'static str,
+    events: &mut dyn FnMut(BenchmarkEvent),
 ) -> Result<u64> {
     let input = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(input_path)?);
     let limited = input.take(input_size);
-    let mut reader = ProgressReader::new(limited, phase, Some(input_size));
+    let mut reader = BenchmarkProgressReader::new(limited, phase, Some(input_size), events);
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, File::create(output_path)?);
     storage::write_raw_zstd_archive_stream(input_path, input_size, &mut reader, &mut writer)?;
     writer.flush()?;
@@ -332,11 +335,12 @@ fn write_zstd_prefix(
     input_path: &Path,
     output_path: &Path,
     input_size: u64,
-    phase: &str,
+    phase: &'static str,
+    events: &mut dyn FnMut(BenchmarkEvent),
 ) -> Result<u64> {
     let input = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(input_path)?);
     let limited = input.take(input_size);
-    let mut reader = ProgressReader::new(limited, phase, Some(input_size));
+    let mut reader = BenchmarkProgressReader::new(limited, phase, Some(input_size), events);
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, File::create(output_path)?);
     let read =
         zstd_backend::compress_stream(&mut reader, &mut writer, zstd_backend::DEFAULT_LEVEL)?;
@@ -350,23 +354,34 @@ fn write_zstd_prefix(
     Ok(std::fs::metadata(output_path)?.len())
 }
 
-fn restore_v1_raw_path(input_path: &Path, output_path: &Path, phase: &str) -> Result<u64> {
+fn restore_v1_raw_path(
+    input_path: &Path,
+    output_path: &Path,
+    phase: &'static str,
+    events: &mut dyn FnMut(BenchmarkEvent),
+) -> Result<u64> {
     let input = File::open(input_path)?;
     let mut reader = BufReader::with_capacity(IO_BUFFER_BYTES, input);
     let metadata = storage::read_v1_archive_header(&mut reader)?;
     let output = File::create(output_path)?;
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, output);
-    let mut progress_writer = ProgressWriter::new(&mut writer, phase, Some(metadata.original_size));
+    let mut progress_writer =
+        BenchmarkProgressWriter::new(&mut writer, phase, Some(metadata.original_size), events);
     let restored = storage::restore_raw_zstd_stream(&metadata, &mut reader, &mut progress_writer)?;
     progress_writer.flush()?;
     progress_writer.finish();
     Ok(restored)
 }
 
-fn sha256_path_prefix(path: &Path, input_size: u64, phase: &str) -> Result<String> {
+fn sha256_path_prefix(
+    path: &Path,
+    input_size: u64,
+    phase: &'static str,
+    events: &mut dyn FnMut(BenchmarkEvent),
+) -> Result<String> {
     let input = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(path)?);
     let limited = input.take(input_size);
-    let mut reader = ProgressReader::new(limited, phase, Some(input_size));
+    let mut reader = BenchmarkProgressReader::new(limited, phase, Some(input_size), events);
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; IO_BUFFER_BYTES];
     let mut total = 0u64;
@@ -391,11 +406,12 @@ fn copy_path_prefix(
     input_path: &Path,
     output_path: &Path,
     input_size: u64,
-    phase: &str,
+    phase: &'static str,
+    events: &mut dyn FnMut(BenchmarkEvent),
 ) -> Result<()> {
     let input = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(input_path)?);
     let limited = input.take(input_size);
-    let mut reader = ProgressReader::new(limited, phase, Some(input_size));
+    let mut reader = BenchmarkProgressReader::new(limited, phase, Some(input_size), events);
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, File::create(output_path)?);
     let copied = std::io::copy(&mut reader, &mut writer)?;
     writer.flush()?;
@@ -406,6 +422,72 @@ fn copy_path_prefix(
         )));
     }
     Ok(())
+}
+
+struct BenchmarkProgressReader<'a, R> {
+    inner: R,
+    reporter: BenchmarkProgressReporter<'a>,
+}
+
+impl<'a, R> BenchmarkProgressReader<'a, R> {
+    fn new(
+        inner: R,
+        phase: &'static str,
+        total_bytes: Option<u64>,
+        events: &'a mut dyn FnMut(BenchmarkEvent),
+    ) -> Self {
+        Self {
+            inner,
+            reporter: BenchmarkProgressReporter::new(phase, total_bytes, events),
+        }
+    }
+
+    fn finish(&mut self) {
+        self.reporter.finish();
+    }
+}
+
+impl<R: Read> Read for BenchmarkProgressReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.reporter.add_bytes(read as u64);
+        Ok(read)
+    }
+}
+
+struct BenchmarkProgressWriter<'a, W> {
+    inner: W,
+    reporter: BenchmarkProgressReporter<'a>,
+}
+
+impl<'a, W> BenchmarkProgressWriter<'a, W> {
+    fn new(
+        inner: W,
+        phase: &'static str,
+        total_bytes: Option<u64>,
+        events: &'a mut dyn FnMut(BenchmarkEvent),
+    ) -> Self {
+        Self {
+            inner,
+            reporter: BenchmarkProgressReporter::new(phase, total_bytes, events),
+        }
+    }
+
+    fn finish(&mut self) {
+        self.reporter.finish();
+    }
+}
+
+impl<W: Write> Write for BenchmarkProgressWriter<'_, W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.reporter.add_bytes(written as u64);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {

@@ -1,7 +1,52 @@
 use crate::analysis::DatasetAnalysis;
+use crate::benchmark::{BenchmarkEvent, BenchmarkMetrics, BenchmarkNotice, ProfileTimings};
 
 use super::super::profile::{display_optional_f64, display_optional_u64};
-use super::model::{BenchmarkMetrics, ProfileTimings};
+use super::super::progress::progress_phase;
+
+pub(super) fn print_event(event: BenchmarkEvent) {
+    match event {
+        BenchmarkEvent::Notice(notice) => print_notice(notice),
+        BenchmarkEvent::Phase {
+            name,
+            processed_bytes,
+            total_bytes,
+            started,
+            ..
+        } => progress_phase(name, processed_bytes, total_bytes, started),
+    }
+}
+
+fn print_notice(notice: BenchmarkNotice) {
+    match notice {
+        BenchmarkNotice::LargeInput { source_size_bytes } => eprintln!(
+            "warning: Large input detected ({:.2} GiB). Full benchmark may run zstd baseline, DataPack compression, decompression, and SHA256 validation. Use --quick, --max-input-mb, --no-roundtrip, or --no-zstd-baseline for faster partial tests.",
+            source_size_bytes as f64 / 1_073_741_824.0
+        ),
+        BenchmarkNotice::CommaEligibilityFallback => eprintln!(
+            "benchmark canonical comma structured-compression eligibility was not established; using RawZstd execution."
+        ),
+        BenchmarkNotice::AnalysisLimited { limitation_codes } => eprintln!(
+            "benchmark analysis limited ({}); using RawZstd execution.",
+            limitation_codes.join(", ")
+        ),
+        BenchmarkNotice::StreamingRawZstdExecution => {
+            eprintln!("benchmark execution path: streaming RawZstd");
+        }
+        BenchmarkNotice::CompressRun { run, total_runs } => {
+            eprintln!("benchmark compress run {run}/{total_runs}");
+        }
+        BenchmarkNotice::DecompressRun { run, total_runs } => {
+            eprintln!("benchmark decompress run {run}/{total_runs}");
+        }
+        BenchmarkNotice::ChunkedCompressRun { run, total_runs } => {
+            eprintln!("benchmark chunked RawZstd compress run {run}/{total_runs}");
+        }
+        BenchmarkNotice::ChunkedDecompressRun { run, total_runs } => {
+            eprintln!("benchmark chunked RawZstd decompress run {run}/{total_runs}");
+        }
+    }
+}
 
 pub(super) fn print_estimate_only_table(
     analysis: &DatasetAnalysis,
@@ -213,14 +258,14 @@ pub(super) fn print_benchmark_table(metrics: &BenchmarkMetrics) {
         "{:<28} {:>18}  SHA256 validation coverage",
         "validation_status", metrics.validation_status
     );
+    let partial_reason_text = if metrics.partial_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        metrics.partial_reasons.join("; ")
+    };
     println!(
         "{:<28} {:>18}  Why this benchmark is partial/non-validating",
-        "partial_reasons",
-        if metrics.partial_reasons.is_empty() {
-            "none"
-        } else {
-            &metrics.partial_reasons
-        }
+        "partial_reasons", partial_reason_text
     );
     println!(
         "{:<28} {:>18}  Whether --max-input-mb truncated the source",
@@ -497,7 +542,7 @@ pub(super) fn print_benchmark_json(metrics: &BenchmarkMetrics) {
     );
     println!(
         "  \"partial_reasons\": \"{}\",",
-        json_escape(&metrics.partial_reasons)
+        json_escape(&metrics.partial_reasons.join("; "))
     );
     println!("  \"input_sampled\": {},", metrics.input_sampled);
     println!(

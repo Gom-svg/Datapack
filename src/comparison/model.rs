@@ -6,74 +6,82 @@ use serde::Serialize;
 pub(super) const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ComparisonReportV1 {
-    pub(crate) schema_version: u32,
-    pub(crate) report_type: &'static str,
-    pub(crate) mode: &'static str,
-    pub(crate) scope: ComparisonScopeV1,
-    pub(crate) methodology: ComparisonMethodologyV1,
-    pub(crate) datapack: CompetitorReportV1,
-    pub(crate) standalone_zstd: CompetitorReportV1,
-    pub(crate) winners: ComparisonWinnersV1,
-    pub(crate) limitations: Vec<ComparisonLimitationV1>,
+#[non_exhaustive]
+pub struct ComparisonReportV1 {
+    pub schema_version: u32,
+    pub report_type: &'static str,
+    pub mode: &'static str,
+    pub scope: ComparisonScopeV1,
+    pub methodology: ComparisonMethodologyV1,
+    pub datapack: CompetitorReportV1,
+    pub standalone_zstd: CompetitorReportV1,
+    pub winners: ComparisonWinnersV1,
+    pub limitations: Vec<ComparisonLimitationV1>,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ComparisonScopeV1 {
-    pub(crate) kind: &'static str,
-    pub(crate) source_size_bytes: u64,
-    pub(crate) compared_size_bytes: u64,
-    pub(crate) prefix_limited: bool,
+#[non_exhaustive]
+pub struct ComparisonScopeV1 {
+    pub kind: &'static str,
+    pub source_size_bytes: u64,
+    pub compared_size_bytes: u64,
+    pub prefix_limited: bool,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ComparisonMethodologyV1 {
-    pub(crate) runs: usize,
-    pub(crate) aggregation: &'static str,
-    pub(crate) timing_boundary: &'static str,
-    pub(crate) planning_included: bool,
-    pub(crate) planning_time_ms: f64,
-    pub(crate) zstd_level: i32,
-    pub(crate) artifact_stability: &'static str,
-    pub(crate) validation: &'static str,
+#[non_exhaustive]
+pub struct ComparisonMethodologyV1 {
+    pub runs: usize,
+    pub aggregation: &'static str,
+    pub timing_boundary: &'static str,
+    pub planning_included: bool,
+    pub planning_time_ms: f64,
+    pub zstd_level: i32,
+    pub artifact_stability: &'static str,
+    pub validation: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct CompetitorReportV1 {
-    pub(crate) artifact_format: &'static str,
-    pub(crate) selected_mode: Option<&'static str>,
-    pub(crate) artifact_size_bytes: u64,
-    pub(crate) compression_ratio: f64,
-    pub(crate) compression: TimingReportV1,
-    pub(crate) decompression: TimingReportV1,
-    pub(crate) validation: CompetitorValidationV1,
+#[non_exhaustive]
+pub struct CompetitorReportV1 {
+    pub artifact_format: &'static str,
+    pub selected_mode: Option<&'static str>,
+    pub artifact_size_bytes: u64,
+    pub compression_ratio: f64,
+    pub compression: TimingReportV1,
+    pub decompression: TimingReportV1,
+    pub validation: CompetitorValidationV1,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct TimingReportV1 {
-    pub(crate) samples_ms: Vec<f64>,
-    pub(crate) median_ms: f64,
-    pub(crate) throughput_mib_per_second: Option<f64>,
+#[non_exhaustive]
+pub struct TimingReportV1 {
+    pub samples_ms: Vec<f64>,
+    pub median_ms: f64,
+    pub throughput_mib_per_second: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct CompetitorValidationV1 {
-    pub(crate) status: &'static str,
-    pub(crate) restored_size_bytes: u64,
-    pub(crate) sha256_match: bool,
+#[non_exhaustive]
+pub struct CompetitorValidationV1 {
+    pub status: &'static str,
+    pub restored_size_bytes: u64,
+    pub sha256_match: bool,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ComparisonWinnersV1 {
-    pub(crate) best_storage_ratio: &'static str,
-    pub(crate) fastest_compression: &'static str,
-    pub(crate) fastest_decompression: &'static str,
+#[non_exhaustive]
+pub struct ComparisonWinnersV1 {
+    pub best_storage_ratio: &'static str,
+    pub fastest_compression: &'static str,
+    pub fastest_decompression: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ComparisonLimitationV1 {
-    pub(crate) code: &'static str,
-    pub(crate) message: &'static str,
+#[non_exhaustive]
+pub struct ComparisonLimitationV1 {
+    pub code: &'static str,
+    pub message: &'static str,
 }
 
 impl ComparisonLimitationV1 {

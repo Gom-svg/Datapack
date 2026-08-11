@@ -76,6 +76,21 @@ impl TempOutput {
     /// supports sibling renames. A cross-device rename falls back to a
     /// create-new copy, with partial-copy cleanup and previous-output restore.
     pub fn commit(&mut self, output_path: &Path, force: bool) -> Result<()> {
+        self.commit_with_cleanup_warning(output_path, force)
+            .map(|_| ())
+    }
+
+    /// Commits the temporary output and reports a non-fatal failure to remove
+    /// the preserved previous output after the new output is installed.
+    ///
+    /// The warning is a diagnostic fact, not a commit failure: when it is
+    /// returned, the requested output has already been installed successfully
+    /// and the named backup remains available for manual cleanup.
+    pub(crate) fn commit_with_cleanup_warning(
+        &mut self,
+        output_path: &Path,
+        force: bool,
+    ) -> Result<Option<String>> {
         validate_existing_output(output_path, force)?;
 
         let backup_path = if output_path.exists() {
@@ -118,17 +133,18 @@ impl TempOutput {
         }
 
         self.committed = true;
-        if let Some(backup) = backup_path {
-            if let Err(error) = std::fs::remove_file(&backup) {
-                eprintln!(
-                    "warning: committed '{}' but could not remove backup '{}': {error}",
-                    output_path.display(),
-                    backup.display()
-                );
-            }
-        }
-        Ok(())
+        Ok(backup_path.and_then(|backup| cleanup_backup_warning(output_path, &backup)))
     }
+}
+
+fn cleanup_backup_warning(output_path: &Path, backup_path: &Path) -> Option<String> {
+    std::fs::remove_file(backup_path).err().map(|error| {
+        format!(
+            "committed '{}' but could not remove backup '{}': {error}",
+            output_path.display(),
+            backup_path.display()
+        )
+    })
 }
 
 impl Drop for TempOutput {
@@ -282,5 +298,40 @@ mod tests {
         let error = guard.commit(&output, false).expect_err("must not clobber");
         assert!(error.to_string().contains("--force"));
         assert_eq!(std::fs::read(&output).expect("read previous"), b"previous");
+    }
+
+    #[test]
+    fn commit_with_cleanup_warning_replaces_output_without_warning() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let output = directory.path().join("result.bin");
+        std::fs::write(&output, b"previous").expect("write previous");
+        let (mut guard, mut file) = TempOutput::create(&output, false).expect("create temp");
+        file.write_all(b"replacement").expect("write temp");
+        drop(file);
+
+        let warning = guard
+            .commit_with_cleanup_warning(&output, true)
+            .expect("commit replacement");
+
+        assert!(warning.is_none());
+        assert_eq!(
+            std::fs::read(&output).expect("read replacement"),
+            b"replacement"
+        );
+    }
+
+    #[test]
+    fn backup_cleanup_failure_becomes_a_diagnostic_warning() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let output = directory.path().join("result.bin");
+        let backup = directory.path().join("result.previous");
+        std::fs::create_dir(&backup).expect("create non-file backup target");
+
+        let warning = cleanup_backup_warning(&output, &backup).expect("cleanup warning");
+
+        assert!(warning.contains("could not remove backup"));
+        assert!(warning.contains(&output.display().to_string()));
+        assert!(warning.contains(&backup.display().to_string()));
+        assert!(backup.is_dir());
     }
 }

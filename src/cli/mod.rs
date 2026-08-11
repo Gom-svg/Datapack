@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::analysis;
+use crate::application;
 use crate::error::Result;
 use crate::generation::{self, Profile};
 use crate::storage;
@@ -309,15 +309,6 @@ enum CompareModeArg {
     Full,
 }
 
-impl From<CompareModeArg> for crate::comparison::ComparisonMode {
-    fn from(value: CompareModeArg) -> Self {
-        match value {
-            CompareModeArg::Quick => Self::Quick,
-            CompareModeArg::Full => Self::Full,
-        }
-    }
-}
-
 impl ChunkedBackendArg {
     fn storage_backend(self) -> storage::chunked::ChunkedBackend {
         match self {
@@ -432,9 +423,12 @@ pub fn run(cli: Cli) -> Result<()> {
             json,
             pretty,
         } => compare::run(
-            input,
-            crate::comparison::CompareOptions {
-                mode: mode.into(),
+            application::CompareRequest {
+                input,
+                mode: match mode {
+                    CompareModeArg::Quick => application::CompareMode::Quick,
+                    CompareModeArg::Full => application::CompareMode::Full,
+                },
                 runs,
                 max_input_mb,
             },
@@ -600,17 +594,6 @@ struct BenchmarkOptions {
     max_input_mb: Option<u64>,
 }
 
-impl BenchmarkOptions {
-    fn uses_chunked(self) -> bool {
-        self.chunked
-            || self.chunk_size_mb.is_some()
-            || self.threads.is_some()
-            || self.max_in_flight_chunks.is_some()
-            || self.backend.is_some()
-            || self.adaptive_level
-    }
-}
-
 fn analyze_command(
     input: PathBuf,
     include_plan: bool,
@@ -618,7 +601,7 @@ fn analyze_command(
     json: bool,
     pretty: bool,
 ) -> Result<()> {
-    let analysis = analysis::analyze_cli_path(&input, sample_mb)?;
+    let analysis = application::analyze_for_cli(application::AnalyzeRequest { input, sample_mb })?;
     if json {
         analysis_json::print_analysis_v1(&analysis, pretty)
     } else {
