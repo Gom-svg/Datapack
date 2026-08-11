@@ -1,12 +1,14 @@
 # DataPack Security Policy
 
-DataPack treats every input file, command-line value, and `.dpack` archive as
-untrusted. Losslessness is the primary invariant: a restored file is valid only
-when its bytes are identical to the original bytes. For v2 archives, SHA-256 is
-the authoritative integrity check.
+DataPack treats every input file, `.dpack` archive, path, and option crossing
+the CLI, public Rust Application API, or Python SDK boundary as untrusted.
+Losslessness is the primary invariant: a restored file is valid only when its
+bytes are identical to the original bytes. For v2 archives, SHA-256 is the
+authoritative integrity check.
 
-This document describes the security boundary of the local DataPack CLI and the
-frozen `.dpack` v1 and v2 formats. It does not create a new archive format.
+This document describes the security boundary of the local DataPack CLI, Rust
+Application API, Python SDK foundation, and frozen `.dpack` v1 and v2 formats.
+It does not create a new archive format.
 
 ## 1. Threat Model
 
@@ -14,16 +16,19 @@ frozen `.dpack` v1 and v2 formats. It does not create a new archive format.
 
 | Trusted | Untrusted |
 | --- | --- |
-| The DataPack binary and its shipped code | Input files |
-| The local machine, operating system, and Rust runtime | `.dpack` headers, metadata, chunk tables, offsets, sizes, hashes, and compressed payloads |
-| Paths intentionally selected by the local user | CLI strings and paths copied from other machines or users |
+| The DataPack binary, Rust Application service, Python extension, and their shipped project code | Input files and `.dpack` archives |
+| The local machine, operating system, and Rust/Python runtimes | `.dpack` headers, metadata, chunk tables, offsets, sizes, hashes, and compressed payloads |
+| The local operator's decision to invoke DataPack and grant operating-system access | Paths and option values supplied through the CLI, Rust requests, or Python calls |
 
 The primary attacker-controlled object is an archive supplied by another user
 or machine. An attacker may deliberately truncate it, corrupt a zstd frame,
 forge sizes or offsets, create overlapping ranges, claim an extreme output size
 or chunk count, alter hashes, append data, or combine fields to trigger integer
 overflow and excessive allocation. Input filenames and output paths may also be
-mistyped or deliberately chosen to collide.
+mistyped or deliberately chosen to collide. A library or Python caller can
+likewise pass hostile paths, counts, byte limits, overwrite choices, or
+verification controls. The Python package is a thin adapter over the Rust
+Application API and does not bypass Rust validation.
 
 The assets DataPack protects are:
 
@@ -100,6 +105,10 @@ range checks, zstd decoding, per-chunk restored-size checks, or total-size
 checks. Output produced with this option has not passed DataPack's authoritative
 integrity check and must not be treated as validated.
 
+The equivalent Rust Application and Python request choice is `verify = false`;
+it has the same reduced integrity meaning and does not create a separate
+verification policy.
+
 SHA-256 fields detect corruption relative to the metadata in an archive. They
 do not prove who created the archive: an attacker able to rewrite an archive
 can also recompute unkeyed hashes. Use a trusted external signature when
@@ -120,10 +129,16 @@ specific error. User-controlled input is not permitted to reach `panic!`,
 `unwrap`, `expect`, `todo!`, `unimplemented!`, or unchecked indexing. Internal
 invariants that remain infallible must be documented and preceded by validation.
 
+The core library, CLI binary, and Python binding each declare
+`#![forbid(unsafe_code)]`. Those product crates therefore cannot introduce an
+`unsafe` block or function. This restriction does not extend into third-party
+dependencies, which remain part of the supply-chain trust boundary and are
+reviewed through the committed lockfiles and dependency-policy checks.
+
 ### Resource limits
 
-Decompression supports optional defense-in-depth limits. MiB values mean
-1,048,576 bytes.
+Decompression supports optional defense-in-depth limits. CLI options ending in
+`-mb` use MiB, where one MiB is 1,048,576 bytes:
 
 - `--max-output-mb <n>` rejects an archive whose declared original size exceeds
   the limit, before payload decompression.
@@ -135,11 +150,19 @@ Decompression supports optional defense-in-depth limits. MiB values mean
   working-memory estimate exceeds the limit before large payload buffers are
   created. Allocator overhead and zstd context/workspace memory are not exact.
 
+The Rust Application API and Python SDK use bytes for byte-named fields such as
+`max_output_bytes`, `max_memory_bytes`, and v2 `chunk_size_bytes`; they do not
+reinterpret those values as MiB. Fields that retain an `_mb` name, including
+`sample_mb` and `max_input_mb`, retain MiB semantics. `max_chunks` is a count in
+all interfaces and applies to the v2 chunk table, not to v1.
+
 Compression also validates chunk size, worker count, and maximum in-flight
 chunks. A configuration whose in-flight chunk bytes exceed an active memory
-limit is rejected with the relevant option names. User-supplied limits are
-optional so DataPack remains usable for 7+ GiB files; omitting them does not
-disable structural validation or the internal chunk-count ceiling.
+limit is rejected with the relevant option names. Explicit limits are optional
+so an operator can select budgets appropriate to the input and host; omitting
+them does not disable structural validation or the internal chunk-count
+ceiling, and it does not promise that every large input will fit available
+resources.
 
 Limits reduce resource-exhaustion risk but cannot guarantee that a run will fit
 available RAM or disk. Zstd workspaces, filesystem buffering, temporary output,
@@ -152,7 +175,8 @@ not permission to use that many chunks on a resource-constrained machine.
 
 Compression and decompression validate path collisions and the output parent
 directory. Existing outputs are protected unless `--force` is explicitly
-provided. DataPack writes a temporary sibling and commits it only after the
+provided by the CLI or `overwrite` is explicitly enabled by a Rust/Python
+caller. DataPack writes a temporary sibling and commits it only after the
 operation and required verification succeed. Thus:
 
 - on success, the final path contains the complete committed output;
@@ -160,11 +184,15 @@ operation and required verification succeed. Thus:
   not exist; and
 - a partial temporary file is not presented as a successful final artifact.
 
-Temporary files are removed after ordinary failures by default. `--keep-temp`
-preserves them for debugging; preserved files are incomplete and untrusted and
-must never be mistaken for committed output. Filesystem and commit errors name
-the affected operation and path and report whether the final output was
-committed or cleaned up.
+Temporary files are removed after ordinary failures by default. For CLI
+Compress and Decompress, `--keep-temp` maps to the Rust/Python `keep_partial`
+request field; both preserve an operation-owned partial output for diagnosis.
+Benchmark and Tune use their own `--keep-temp` artifact lifecycles, and the
+Rust Benchmark request names that choice `keep_artifacts`. Every retained file
+may contain plaintext, sampled input, or incomplete/untrusted output and must
+never be mistaken for a committed production result. Filesystem and commit
+errors name the affected operation and path and report whether the final output
+was committed or cleaned up.
 
 ### Compatibility and format freeze
 
@@ -187,8 +215,9 @@ DataPack intentionally does not provide:
 - protection against an authorized user deliberately choosing very large
   resource limits or exhausting the destination filesystem.
 
-Phase 6 does not add GPU, ML, LZ4, JSON, TOON, new archive formats, a rewritten
-CSV parser, or a redesigned `CsvColumnarDictionary` representation.
+DataPack does not currently implement Desktop, GPU acceleration, an adaptive
+CPU/GPU scheduler, cloud upload, SaaS, telemetry, or a v3 encoder/decoder.
+Those absent product capabilities do not weaken the documented v1/v2 checks.
 
 ## 4. Recommended Safe Usage
 
@@ -208,8 +237,9 @@ CSV parser, or a redesigned `CsvColumnarDictionary` representation.
 - When provenance matters, verify a trusted detached signature over the entire
   archive before invoking DataPack. The embedded unkeyed hashes are not an
   authenticity mechanism.
-- Delete preserved `--keep-temp` artifacts after diagnosis. They can contain
-  sensitive plaintext or incomplete archive data.
+- Delete preserved CLI `--keep-temp`, Application/Python `keep_partial`, and
+  Benchmark `keep_artifacts` outputs after diagnosis. They can contain
+  sensitive plaintext, sampled input, or incomplete archive data.
 - Keep backups of valuable existing outputs even when using atomic commit
   semantics; storage and operating-system failures remain possible.
 
@@ -236,42 +266,57 @@ commit mutation tests remain part of the regular test suite.
 ### Local quality checks
 
 Run `scripts/check.sh` on Bash or `scripts/check.ps1` on PowerShell. They execute
-format checking, tests, clippy with warnings denied, and a release build. Supply
-chain checks can be run separately:
+format checking, `cargo check`, tests, Clippy with warnings denied, and a
+release build. Supply-chain checks can be run separately:
 
 ```bash
 cargo tree
 cargo tree -d
-cargo install cargo-audit
+cargo install --locked cargo-audit
 cargo audit
-cargo install cargo-deny
+cargo install --locked cargo-deny
 cargo deny check
 ```
 
-### Deferred Phase 7 work
+### Accepted compatibility advisory
 
-The following are proposals only and are not implemented by this hardening
-phase:
+Frozen v1 metadata uses bincode 1.3.3. Replacing its serialization merely to
+silence a maintenance advisory would change a protected compatibility surface.
+[`deny.toml`](deny.toml) therefore contains one explicit exception for
+`RUSTSEC-2025-0141`, which reports that bincode is unmaintained. This is a
+**KNOWN ACCEPTED WARNING**, not a claim that the advisory is absent or fixed.
+
+`cargo audit` remains visible and may report this advisory. The cargo-deny
+exception is narrow and does not suppress unrelated new advisories. See the
+[CI and repository policy](docs/reference/CI_AND_REPOSITORY_POLICY.md) for the
+current check matrix.
+
+### Deferred design and productization
+
+The following remain unimplemented and require separate compatibility,
+security, and resource reviews before they can become product behavior:
 
 - chunked `CsvColumnarDictionary`;
 - per-chunk or global zstd dictionaries;
 - CSV-aware chunk boundaries;
 - improved numeric encoding;
-- smarter planner thresholds; and
-- any v3 proposal for additional integrity metadata, such as a hash of each
-  compressed frame.
+- full v3 archive encoding or decoding;
+- bounded-latency cooperative cancellation; and
+- Desktop, GPU, hybrid scheduling, cloud, or service integrations.
 
 Encryption, authentication/HMAC, DRM, obfuscation, cloud services, telemetry,
-licensing, GPU/ML paths, LZ4, and JSON/TOON remain outside Phase 7 unless a later
-project scope explicitly authorizes them.
+and licensing remain explicit non-goals unless a later project scope authorizes
+and specifies them.
 
 ## 5. Reporting Security Issues
 
-Security reporting contact: **TODO: replace with the project's private security
-contact or repository security-advisory URL before public release.**
+This repository does not currently publish a private security-reporting address
+or security-advisory URL. Do not infer or invent one from package metadata. If
+no trusted private contact is already available, withhold exploit details and
+confidential data until the repository owner publishes a reporting channel.
 
 Please include the affected DataPack version and platform, whether the archive
 is v1 or v2, the command used, the observed error or resource behavior, and a
 minimal reproducer when it is safe to share one. Do not attach sensitive source
-data publicly. Until a private channel is published, do not open a public issue
-containing an undisclosed exploit or confidential archive contents.
+data publicly or open a public issue containing an undisclosed exploit or
+confidential archive contents.

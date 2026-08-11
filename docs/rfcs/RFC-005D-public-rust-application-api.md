@@ -5,6 +5,14 @@
 - Baseline: `rfc-011-datapack-advisor`
 - Related: [Application API V1](../reference/APPLICATION_API_V1.md)
 
+> **Checkpoint and follow-up audit (2026-08-10):** Phase 12 was certified at
+> commit `4b17896cd4a490228225c36ce95ef0493c2a2f1b` and tagged
+> `rfc-012-public-rust-application-api`. The subsequent
+> [Python SDK foundation](RFC-005E-python-sdk-foundation.md) consumes this Rust
+> service boundary directly, fulfilling the planned second-consumer proof. It
+> does not supersede the path-based scope, synchronous progress semantics, or
+> cancellation deferral documented below.
+
 ## 1. Decision
 
 Phase 12 introduces `datapack::application`, a public, path-based service

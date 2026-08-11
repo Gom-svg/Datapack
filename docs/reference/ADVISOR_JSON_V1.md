@@ -126,13 +126,19 @@ be false. V1 renders those RawZstd cases as follows:
 | `safe_fallback` | `safety_policy` | `Analysis safety limits require the byte-preserving RawZstd fallback.` |
 | `format_fallback` | `compatibility_policy` | `The compatibility adapter requires the byte-preserving RawZstd fallback.` |
 
-Current V1 selection reason codes used as advisory evidence are:
+The V1 selection-reason compatibility domain is:
 
 - `HIGH_REPETITION_DETECTED`;
 - `INSUFFICIENT_REPETITION_MAJORITY`;
 - `PROJECTED_DICTIONARY_SAVINGS_BELOW_THRESHOLD`;
 - `ANALYSIS_LIMITED_RAW_ZSTD_FALLBACK`; and
 - `STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT`.
+
+`STRUCTURED_COMPRESSION_NOT_ENABLED_FOR_DIALECT` is retained for compatibility
+with the V1 reason-code domain and a possible format-compatibility override. It
+is not the normal outcome for any of the four currently supported structured
+delimiters: comma, semicolon, tab, and pipe are all eligible for the current v1
+structured path when their analysis and encoder safety checks pass.
 
 Consumers must branch on `reason_code`, not planner presentation text.
 

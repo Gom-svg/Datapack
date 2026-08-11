@@ -6,6 +6,16 @@
 - Related: [RFC-001B](RFC-001B-compatible-analysis-core.md) and
   [RFC-002](RFC-002-cli-modularization.md)
 
+> **Follow-up audit (2026-08-10):** Later certified phases fulfilled the
+> deferrals recorded below: [RFC-003](RFC-003-hard-bounded-analysis.md) added
+> hard bounds, [RFC-004A](RFC-004A-delimited-analysis.md) added truthful
+> multi-delimiter analysis, [RFC-005](RFC-005-planner-encoder-contract.md)
+> enforced planner/encoder execution, and
+> [RFC-005D](RFC-005D-public-rust-application-api.md) re-exported the V1 report
+> through the public Application API. The historical Phase 3 body remains the
+> checkpoint contract; these follow-ups did not place the report in v1/v2 wire
+> metadata.
+
 ## 1. Decision
 
 Phase 3 adds a versioned, privacy-conscious JSON representation of the

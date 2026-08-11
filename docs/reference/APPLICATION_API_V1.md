@@ -261,6 +261,16 @@ hooks.
 Cancellation remains deferred until every long-running path can honor the
 same cleanup, transactional-commit, and Benchmark timing invariants.
 
+## Python consumer (non-normative)
+
+The separate Python SDK foundation is a thin consumer of this Rust API. It
+currently exposes Analyze, Compress, Decompress, Validate, and Compare and
+converts the existing Rust reports to Python dictionaries; it does not define
+a second engine or result schema. Benchmark, Advisor, progress callbacks, and
+cancellation are not part of that first Python surface. This note does not
+extend or change the normative Rust Application API V1 contract. See the
+[Python SDK foundation](PYTHON_SDK_FOUNDATION.md).
+
 ## Compatibility
 
 Using the application layer does not select a new wire format. It writes and

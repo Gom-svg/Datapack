@@ -1,35 +1,77 @@
 # DataPack
 
-DataPack is a Rust CLI for lossless compression of CSV, TXT, logs, database exports, and other flat structured data.
+DataPack is a Rust crate and CLI for lossless compression of CSV, delimited
+text, TXT, logs, database exports, and other flat data. The crate also exposes
+a synchronous, path-based Rust Application API, and `python/` contains a thin
+Python SDK foundation over that same API.
 
 The non-negotiable requirement is byte-for-byte restoration. SHA256 equality between the original and restored files is the source of truth; a mismatch is a failure.
 
-DataPack is not presented as universally faster than Zstd or LZ4. Those are excellent general-purpose compressors. DataPack competes by selecting a suitable path for the data, providing strong compression on repetitive structured CSVs, scaling predictably on large difficult files, and making integrity and performance visible.
+DataPack does not claim to be universally faster or smaller than standalone
+zstd. Compression ratio and throughput depend on the input, options, build,
+hardware, filesystem, cache state, and validation scope. DataPack instead makes
+the selected archive path, integrity evidence, and measured scope explicit.
 
 ## Choose a Compression Path
 
 | Path | Archive | Best fit | Important tradeoff |
 | --- | --- | --- | --- |
-| `CsvColumnarDictionary` | `.dpack` v1 | Repetitive structured CSVs, categorical columns, BI exports, and reports | Often the best DataPack ratio, but it remains a whole-file path and is not the large-file chunked mode |
-| `RawZstd` | `.dpack` v1 | Planner fallback, non-CSV data, and compatibility with the established container | Bounded streaming is available, but v1 has no chunk table or stored SHA256 hashes |
-| Chunked `RawZstd` | `.dpack` v2 | Huge or high-cardinality CSVs, numeric-heavy files, logs, and difficult datasets | Scalable and observable, with bounded memory and per-chunk/global SHA256; it does not apply columnar transforms |
+| `CsvColumnarDictionary` | `.dpack` v1 | Repetitive comma-, semicolon-, tab-, or pipe-delimited data | May improve ratio when repetition supports it, but it remains a whole-file path and is not the bounded large-file mode |
+| `RawZstd` | `.dpack` v1 | Planner fallback, unsupported or unstructured data, and compatibility with the established container | Bounded streaming is available, but v1 has no chunk table or stored SHA256 hashes |
+| Chunked `RawZstd` | `.dpack` v2 | Large, high-cardinality, numeric-heavy, log, and other difficult inputs | Uses a bounded pipeline with per-chunk/global SHA256; it does not apply columnar transforms |
 | Native zstd MT (experimental) | `.dpack` v2 | Explicit comparison of zstd's internal worker pool on v2 chunks | Non-default; thread semantics and memory behavior differ, and no speed advantage is assumed |
 
 Use normal `compress --mode fast` when you want the planner to select between the established v1 paths. Use `--chunked` explicitly for the v2 large-file path. DataPack v2 is RawZstd-only today.
 
 ## Commands
 
+The current CLI has nine commands:
+
+| Command | Purpose |
+| --- | --- |
+| `analyze` | Inspect bounded structured facts and the compression plan; optionally emit Analysis JSON V1 |
+| `compress` | Create a transactional v1 archive by default or an explicit v2 chunked archive |
+| `decompress` | Restore v1 or v2 bytes transactionally |
+| `validate` | Validate an archive without creating a restored output; optionally compare against a source file |
+| `compare` | Run the defined factual DataPack-v1 versus standalone-zstd comparison |
+| `advisor` | Produce deterministic advice from existing analysis and planner facts |
+| `generate-test-data` | Generate deterministic fictitious CSV corpora |
+| `tune` | Experimentally measure a grid of v2 chunk and thread settings |
+| `benchmark` | Run the configurable legacy benchmark workflow |
+
 ```powershell
 datapack analyze input.csv --plan --sample-mb 64
 datapack compress input.csv output.dpack --mode fast
 datapack compress input.csv output.dpack --mode fast --chunked --profile
 datapack decompress output.dpack restored.csv --profile
+datapack validate output.dpack --against input.csv
+datapack compare input.csv --mode quick --runs 3
+datapack advisor input.csv --json
 datapack benchmark input.csv --quick --profile
 datapack tune input.csv --max-input-mb 1024 --runs 1 --output tune.csv
 datapack generate-test-data realistic sample.csv --rows 1000000 --seed 20260710
 ```
 
 When running from the source tree, prefix a command with `cargo run --`, for example `cargo run -- analyze samples/small_sample.csv`.
+
+## Delimited Analysis and Bounded Sampling
+
+The shared structured analyzer detects comma, semicolon, tab, and pipe by
+content; a filename extension does not select a dialect or break a tie.
+`analyze`, non-chunked v1 `compress`, `compare`, and `advisor` use this
+dialect-aware path. V2 always stores chunked RawZstd. The legacy `benchmark`
+workflow intentionally retains its certified comma-scoped structured planning
+and falls back to RawZstd for alternate-delimiter planning.
+
+The normal analysis byte sample defaults to 64 MiB and accepts 1 through 2,048
+MiB, but it is not the only bound. The analyzer also caps accepted data records
+at 10,000, a header at 1 MiB, a data record at 8 MiB, columns at 4,096,
+per-column retained cardinality entries at 8,192, shared cardinality entries at
+262,144, and accounted analysis memory at 64 MiB. A report can therefore be
+`sampled` or `partial` before the configured byte allowance is consumed.
+Analysis JSON reports the actual scope, completeness, stop reason, and
+diagnostics; it does not turn a sample into a full-input claim. See
+[Analysis JSON V1](docs/reference/ANALYSIS_JSON_V1.md).
 
 ## Archive Formats and Integrity
 
@@ -42,13 +84,24 @@ DataPack continues to read existing v1 archives. The v1 container stores:
 - bincode metadata length and metadata
 - one zstd-compressed payload
 
-The payload is either `RawZstd` original bytes or the zstd-compressed `CsvColumnarDictionary` reconstruction payload. Planner-selected v1 RawZstd compression and decompression stream with bounded memory without changing the wire format. Columnar v1 remains the established whole-file encoder and decoder.
+The payload is either `RawZstd` original bytes or the zstd-compressed
+`CsvColumnarDictionary` reconstruction payload. The historical structured-mode
+name covers the existing DCSV01 representation for comma, semicolon, tab, and
+pipe; DCSV01 records the actual delimiter byte. Planner-selected v1 RawZstd
+compression and decompression stream with bounded memory without changing the
+wire format. Structured v1 remains the established whole-file encoder and
+decoder.
 
-The v1 format does not contain the global and per-chunk SHA256 fields added in v2. For end-to-end v1 identity proof, use a validating benchmark or compare the original and restored SHA256 values explicitly.
+The v1 format does not contain the global and per-chunk SHA256 fields added in
+v2. A successful v1 validation can prove its available structural,
+decompression, and restored-length checks, but it cannot invent stored hashes.
+For end-to-end v1 identity proof, use `validate --against ORIGINAL`, a validating
+Compare/Benchmark run over the required scope, or compare the original and
+restored SHA256 values explicitly.
 
 ### `.dpack` v2
 
-DataPack v2 is the scalable chunked RawZstd container. It stores:
+DataPack v2 is the bounded-pipeline chunked RawZstd container. It stores:
 
 - `DPACK` magic and version `2`
 - original byte size and global SHA256
@@ -97,11 +150,17 @@ Tradeoffs are workload- and hardware-dependent:
 - Small chunks or I/O-bound workloads may not benefit.
 - The backend may be deterministic for a fixed tested build, but byte-identical frames are not promised across zstd versions or platforms.
 
-Round-trip, SHA256, compatibility, CLI profile, and same-build deterministic-output tests pass in WSL. That is correctness evidence, not a throughput claim. Use benchmark or tune on representative local data before drawing performance conclusions.
+Round-trip, SHA256, compatibility, CLI profile, and same-build
+deterministic-output coverage exercises this backend. That is correctness
+evidence, not a throughput claim. Use Compare, Benchmark, or Tune on
+representative local data before drawing performance conclusions.
 
 ## Planning and Columnar Compression
 
-The preflight `CompressionPlan` samples the input and predicts `CsvColumnarDictionary` or `RawZstd`. It is deliberately conservative on unstable row widths, unsupported CSV structures, high cardinality, and poor projected dictionary savings.
+The preflight `CompressionPlan` samples the input and predicts
+`CsvColumnarDictionary` or `RawZstd`. It is deliberately conservative on
+unstable row widths, unsupported delimited structures, high cardinality, and
+poor projected dictionary savings.
 
 ```powershell
 datapack analyze input.csv --plan --sample-mb 64
@@ -113,6 +172,53 @@ datapack compress input.csv output.dpack --verify-best
 `--mode fast` follows the planner for one planned compression path. `--mode best` compares candidates when the projection is close, and `--verify-best` builds both safe candidates and keeps the smaller archive when structured analysis is eligible. A hard analysis limit or malformed/unsupported structured input overrides both modes and enters the transactional streaming RawZstd path without building a columnar candidate. The columnar encoder still validates its own reconstruction before that payload can be stored; an unsafe or unsupported candidate also falls back to RawZstd.
 
 Dictionary planning limits are controlled with `--max-dictionary-values` and `--max-dictionary-mb`. The defaults are 65,535 values and 64 MiB of logical dictionary entries per column. Columns exceeding a sampled limit switch to `Plain` in the executable plan. The full-input DCSV01 writer enforces the same limits, including the stored header value; if later values make a planned Dictionary column exceed either limit, the structured candidate is rejected and compression falls back byte-exactly to `RawZstd`.
+
+## Validate, Compare, and Advisor
+
+`datapack validate ARCHIVE` reads and validates an archive without creating a
+restored output. `--against ORIGINAL` additionally compares the complete
+reconstructed identity with a source file. V2 validation can check its stored
+chunk table, per-chunk SHA256 values, and global SHA256. V1 reports those hash
+checks as unavailable because the frozen v1 format does not store them. See
+[Validation JSON V1](docs/reference/VALIDATION_JSON_V1.md).
+
+`datapack compare INPUT` is the narrower, defined two-contender comparison:
+DataPack's current default v1 path versus a standalone zstd level-3 frame.
+Quick mode is the default, compares at most a 64 MiB immutable prefix, and is
+always reported as partial. Full mode compares the complete immutable snapshot.
+Both contenders use interleaved file-to-file runs, median aggregation, stable
+per-run artifact identity, and SHA256 round-trip validation. Compare reports
+three independent measured winners and never an overall score, confidence, or
+universal recommendation. See the
+[Comparison methodology](docs/reference/COMPARISON_METHODOLOGY.md).
+
+`datapack advisor INPUT` is a deterministic projection of existing analysis
+and `PlannerPolicyV1` facts. It performs no compression, comparison,
+validation, hashing, or benchmark, and it does not use AI, a confidence score,
+or an implicit performance prediction. Advisor remains a CLI-only service in
+the current public Application API. See
+[Advisor JSON V1](docs/reference/ADVISOR_JSON_V1.md).
+
+## Rust Application API and Python Foundation
+
+`datapack::application` provides synchronous, path-based Analyze, Compress,
+Decompress, Validate, Compare, and legacy Benchmark services. Owned typed
+requests and versioned results carry operational facts; Clap parsing, terminal
+rendering, stdout, and stderr remain outside the service layer. Each operation
+also has a typed progress-observer entry point. Progress is observational, and
+the API exposes no cancellation token or bounded-latency cancellation claim.
+Advisor is not one of the six public services. See the
+[Rust Application API V1](docs/reference/APPLICATION_API_V1.md).
+
+The Python SDK foundation is a thin PyO3 consumer of that Rust API, not a
+Python reimplementation of DataPack. It exposes synchronous path-based
+`analyze`, `compress`, `decompress`, `validate`, and `compare` functions and
+returns the Rust reports as Python dictionaries with typed exceptions.
+Benchmark, Advisor, progress callbacks, and cancellation are not exposed in
+this first Python surface. It has no required pandas, Polars, or Spark
+dependency and is a foundation rather than a production-packaging claim. See
+the [Python SDK foundation](docs/reference/PYTHON_SDK_FOUNDATION.md) and
+[Python build instructions](python/README.md).
 
 ## Experimental Hardware Tuning
 
@@ -163,7 +269,14 @@ A sampled run can guide a shortlist, but always validate the selected configurat
 
 ## Benchmarking Large Files
 
-Normal benchmark behavior includes compression, decompression, and SHA256 comparison. The benchmark reports the full source size separately from the measured input size and uses consistent table and JSON fields.
+Benchmark is the configurable legacy diagnostic workflow, not an alias for
+Compare. It permits estimate-only, sampled, skipped-baseline, skipped-roundtrip,
+skipped-hash, and optional-v2 measurements that Compare deliberately does not.
+Its established v1 structured planning remains comma-scoped; alternate
+delimiters use the safe RawZstd execution path in this workflow. Normal
+benchmark behavior includes compression, decompression, and SHA256 comparison.
+The benchmark reports the full source size separately from the measured input
+size and uses consistent table and JSON fields.
 
 ```powershell
 datapack benchmark input.csv
@@ -210,6 +323,13 @@ For inputs larger than 1 GiB, a requested full benchmark prints this non-blockin
 
 Benchmark artifacts are created beside the input by default. Set `DATAPACK_TEMP_DIR` to choose another directory. Artifacts are removed on success and ordinary errors unless `--keep-temp` is supplied. Diagnostics go to stderr so stdout tables and JSON remain parseable.
 
+When input or temporary artifacts are under `/mnt/c` in WSL, measured file I/O
+includes WSL/Windows filesystem translation and NTFS behavior. Label those
+results as WSL/NTFS-path measurements. Do not compare them directly with
+Linux-native filesystem, native-Windows, network-filesystem, or other cache and
+storage results unless the environment is explicitly controlled. The same
+caveat applies to Tune and direct compression/decompression profiles.
+
 ## Profiling and Progress
 
 `compress --profile`, `decompress --profile`, `benchmark --profile`, and `tune --profile` emit diagnostics to stderr. Stable summary fields include the operation, archive version, selected mode/backend, input and output sizes, ratio where relevant, chunk count and size, worker and in-flight limits, verification state, elapsed time, and throughput. Pipeline and per-chunk timing fields are reported where available rather than inferred from overlapping stages.
@@ -234,15 +354,18 @@ Compressed progress is not presented as written progress: the ordered writer may
 datapack compress input.csv output.dpack --mode fast --chunked --chunk-size-mb 128 --threads 8 --profile
 ```
 
-### 2. Full validation
+### 2. Full archive and source validation
 
 ```powershell
+datapack validate output.dpack --against input.csv
 datapack decompress output.dpack restored.csv --profile
 Get-FileHash input.csv -Algorithm SHA256
 Get-FileHash restored.csv -Algorithm SHA256
 ```
 
-The two hashes must match exactly.
+`validate --against` creates no restored output and requires exact reconstructed
+identity. The explicit decompression and external hashes additionally exercise
+the requested restoration path; the two hashes must match exactly.
 
 ### 3. Partial huge-file benchmark
 
@@ -304,30 +427,55 @@ Generated CSVs use CRLF line endings, RFC 4180-style quoting, valid UTF-8, no BO
 ## Build, Test, and Fuzz
 
 ```powershell
-cargo fmt -- --check
-cargo test
-cargo build --release
+cargo fmt --check
+cargo check --locked
+cargo test --locked
+cargo clippy --all-targets --all-features -- -D warnings
+cargo build --release --locked
 ```
 
-If native Windows execution is blocked by Application Control, use WSL with a target directory outside the Windows tree:
+If native Windows execution is blocked by Application Control, use WSL with a
+target directory outside the Windows tree. From the WSL checkout:
 
-```powershell
-wsl --cd /mnt/c/Users/gompr/Documents/datapack -- bash -lc "cargo fmt -- --check && CARGO_TARGET_DIR=/tmp/datapack-target cargo test && CARGO_TARGET_DIR=/tmp/datapack-target cargo build --release"
+```bash
+cd /mnt/c/path/to/datapack
+CARGO_TARGET_DIR="$HOME/.cache/datapack-modernization" bash scripts/check.sh
 ```
 
-The `fuzz/` directory contains a separate `cargo-fuzz` CSV round-trip target. It is intentionally excluded from normal `cargo test`.
+The `fuzz/` crate is intentionally excluded from normal `cargo test`. It has
+four source targets: `csv_roundtrip`, `v2_archive_parser`,
+`v2_decompress_mutated_archive`, and `chunk_table_validation`. Fuzzing requires
+nightly Rust and `cargo-fuzz`; it is not evidence from the normal test suite.
 
-```powershell
+```bash
+rustup toolchain install nightly
 cargo install cargo-fuzz
-cargo fuzz run csv_roundtrip
+cargo +nightly fuzz run csv_roundtrip -- -max_total_time=300
+cargo +nightly fuzz run v2_archive_parser -- -max_total_time=300
+cargo +nightly fuzz run v2_decompress_mutated_archive -- -max_total_time=300
+cargo +nightly fuzz run chunk_table_validation -- -max_total_time=300
 ```
 
-## Roadmap
+Hosted Linux/Windows, Python-foundation, dependency-policy, and packaging jobs
+are configured in `.github/workflows/ci.yml`. A configured workflow is not a
+claim that a hosted run has succeeded; see the
+[CI and repository policy](docs/reference/CI_AND_REPOSITORY_POLICY.md).
 
-- Phase 5B: bounded asynchronous v2 RawZstd pipeline, tuning, profiling, benchmark clarity, and reliability engineering.
-- Phase 5C plan only: chunked `CsvColumnarDictionary` with CSV-aware boundaries, schema/dictionary coordination, per-chunk fallback, and full integrity metadata.
-- Phase 5D plan only: profile-guided parser and CPU optimization, considering `memchr`, `bstr`, `csv-core`, and `simdutf8` only where measurements justify them.
-- Phase 5E plan only: an optional explicit LZ4 ultra-fast mode with lower expected ratio, SHA256 validation, and honest comparison against zstd and current DataPack modes.
-- Native zstd multithreading is available as the explicit non-default `zstd-mt-experimental` v2 compress/benchmark/tune backend; it has no unqualified performance claim.
+## Current Status and Deferred Work
 
-See `ARCHITECTURE.md` for format invariants, pipeline design, tuning methodology, and the detailed future plans.
+- The CLI, frozen v1/v2 readers and writers, four-delimiter v1 structured path,
+  Validate, Compare, Advisor, and public Rust Application API are implemented.
+- The Python SDK is a checkout-based alpha foundation. It is not a statement
+  that production wheels, a broad in-memory API, or asynchronous operation are
+  ready.
+- Native zstd multithreading is available only as the explicit non-default
+  `zstd-mt-experimental` v2 Compress/Benchmark/Tune backend. No general speed
+  advantage is claimed.
+- A future `.dpack` v3 is design work only. No v3 reader, writer, or wire
+  semantics are implemented, and existing v1/v2 bytes are not reinterpreted.
+- DataPack Desktop, GPU acceleration, adaptive CPU/GPU scheduling, cloud
+  upload, telemetry, and full v3 encoding are not implemented. GPU would be an
+  execution backend, not a `.dpack-gpu` archive format.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for format invariants, service boundaries,
+pipeline design, and deferred design work.

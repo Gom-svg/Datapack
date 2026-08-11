@@ -13,7 +13,48 @@ Supporting invariants are:
 - the v2 payload and table order are deterministic for the same input and options whenever practical
 - large-file paths have bounded memory rather than buffering the complete input
 - profiling and partial benchmarks must not imply validation that did not occur
-- `CsvColumnarDictionary` and its proven parser are not redesigned as part of the Phase 5B RawZstd pipeline work
+- `CsvColumnarDictionary` and its proven parser retain their frozen v1 representation
+
+## Current Consumer and Service Layers
+
+The public service boundary separates operation facts from presentation:
+
+```text
+CLI arguments / Python calls
+            |
+            v
+CLI adapter / PyO3 adapter
+            |
+            v
+typed Application requests
+            |
+            v
+Rust Application services
+            |
+            v
+analysis / planning / codecs / storage / validation / comparison / benchmark
+            |
+            v
+versioned Application results
+            |
+            v
+CLI rendering / Python dictionaries / future consumer presentation
+```
+
+`datapack::application` exposes synchronous, path-based Analyze, Compress,
+Decompress, Validate, Compare, and Benchmark services. Requests own operation
+options and results expose versioned facts without leaking Clap types, terminal
+rendering, stdout, or stderr into the service layer. The CLI adapter owns Clap,
+human and JSON rendering, terminal progress labels, and diagnostic streams.
+See the [Rust Application API V1](docs/reference/APPLICATION_API_V1.md).
+
+Advisor, Tune, and test-data generation remain outside the public Application
+API. Advisor is a CLI policy projection over shared analysis and planner facts;
+Tune and generation remain dedicated CLI workflows. The
+[Python SDK foundation](python/README.md) is deliberately thinner still: it
+exposes Analyze, Compress, Decompress, Validate, and Compare, returning the
+corresponding Rust reports as Python dictionaries. It does not reimplement
+planning, parsing, codec, validation, or comparison logic in Python.
 
 ## `.dpack` v1 Architecture
 
@@ -36,9 +77,20 @@ This implementation changed the I/O path, not the wire format. Old v1 archives r
 
 ### V1 CsvColumnarDictionary
 
-The columnar path parses a supported CSV, selects dictionary or plain representation per column, stores reconstruction metadata, and zstd-compresses that reconstruction payload. Dictionary IDs use the smallest safe integer representation. The encoder reconstructs and compares the bytes before accepting a columnar candidate.
+The columnar path parses structured input using comma, tab, pipe, or semicolon
+as its single-byte delimiter, selects dictionary or plain representation per
+column, stores reconstruction metadata, and zstd-compresses that reconstruction
+payload. CSV, TSV, PSV, and semicolon-delimited inputs can therefore use v1
+structured compression when analysis and planner safety requirements pass.
+`CsvColumnarDictionary` and the internal `DCSV01` identifier are historical
+names; the frozen payload's existing delimiter byte distinguishes all four
+supported dialects. Dictionary IDs use the smallest safe integer
+representation. The encoder reconstructs and compares the bytes before
+accepting a columnar candidate.
 
-This path is intentionally still a whole-file operation. It is strongest on repetitive structured CSVs but is not the bounded large-file architecture. Phase 5B does not rewrite its parser, payload representation, or v1 behavior.
+This path is intentionally still a whole-file operation. It is strongest on
+repetitive structured data but is not the bounded large-file architecture. Its
+parser, payload representation, and v1 behavior remain compatibility surfaces.
 
 V1 does not contain the v2 global and per-chunk SHA256 fields. A validating benchmark or an external original/restored SHA256 comparison provides end-to-end identity proof without changing the v1 format.
 
@@ -70,11 +122,13 @@ V2 remains RawZstd-only and retains its existing fixed layout.
 
 Compressed payloads follow the table in chunk-ID order. Decompression restores table entries in order and validates restored size, the per-chunk hash, and the global hash by default.
 
-Phase 5B changes how the existing v2 bytes are produced, not their interpretation. No v2 field, offset, mode identifier, or ordering rule is changed by the asynchronous pipeline.
+The bounded asynchronous pipeline changes how the existing v2 bytes are
+produced, not their interpretation. No v2 field, offset, mode identifier, or
+ordering rule is changed by the pipeline.
 
 Two compressors can produce those same v2 payloads: the default `chunked-raw-zstd` backend and the explicit `zstd-mt-experimental` backend. Both emit one standard zstd frame per chunk. The backend is an execution choice reported by profiling, benchmarking, and tuning, not a new v2 compression-mode identifier required for decompression.
 
-## Phase 5B Bounded Pipeline
+## V2 Bounded Compression Pipeline
 
 The large-file compression path is divided into a continuously fed reader, a persistent compression pool, and an ordered writer.
 
@@ -135,9 +189,13 @@ Chunk size, thread count, backend, and maximum in-flight chunks interact. For `c
 
 The complete input and the complete set of compressed payloads are never held in memory.
 
-### Cancellation and output safety
+### Pipeline shutdown and output safety
 
-Reader, worker, and writer errors propagate through the pipeline and stop admission of new work. Channel closure and cancellation let remaining stages exit without waiting for an unbounded queue.
+Reader, worker, and writer errors propagate through the pipeline and stop
+admission of new work. Internal stop signaling and channel closure let the
+remaining stages exit without waiting for an unbounded queue. This is pipeline
+failure coordination, not a public cancellation contract: callers cannot
+request cancellation, and no bounded cancellation latency is promised.
 
 V2 compression writes to a temporary sibling path. Only after all chunks, hashes, header data, and table entries have been successfully finalized and flushed is the temporary archive renamed to the requested output. Ordinary failures remove the incomplete temporary output. A failed run must not leave a partial file that appears to be a successful archive.
 
@@ -225,7 +283,9 @@ Large benchmark artifacts default to the input directory rather than a potential
 
 ## Profiling and Progress Model
 
-Direct compression, direct decompression, benchmark, and tuning diagnostics go to stderr so stdout reports remain machine-readable.
+The CLI adapter sends direct compression, direct decompression, benchmark, and
+tuning diagnostics to stderr so stdout reports remain machine-readable. The
+Application services themselves do not write to either stream.
 
 Coarse stage metrics are preferred over fragile micro-timings. Compression profiling can report:
 
@@ -243,7 +303,19 @@ Decompression profiling can report:
 - average, fastest, and slowest chunk restoration timing
 - total elapsed time and restored-input throughput
 
-Overlapping pipeline timings are not added together and presented as wall-clock time. Progress maintains distinct read, compressed, and written counters, plus total chunks, bytes, percent, elapsed time, ETA, throughput, and optional in-flight/level diagnostics.
+Overlapping pipeline timings are not added together and presented as wall-clock
+time. The reusable Application progress contract reports typed operation,
+phase, and lifecycle state plus completed and optional total byte/item counts.
+It does not contain terminal labels or rendered messages. The CLI presentation
+layer can derive percent, elapsed time, ETA, throughput, and optional
+in-flight/level diagnostics from those facts. Progress observation is
+synchronous and observational; it is not a cancellation hook.
+
+The public Rust Application API and Python foundation expose no cancellation
+token. Uniform bounded-latency cooperative cancellation remains deferred until
+bulk parsing, codec, validation, benchmark, cleanup, and transactional commit
+paths can all honor one truthful contract. This public boundary is distinct
+from the internal v2 pipeline shutdown used to propagate a stage failure.
 
 ## Experimental Native Zstd Multithreading Backend
 
@@ -271,85 +343,61 @@ Tuning results include the complete I/O environment. NVMe, SATA SSD, HDD, networ
 
 Synced paths such as OneDrive are especially unsuitable for controlled throughput comparisons because the sync engine may read or upload an archive while DataPack is still producing it. Recommended benchmarking uses a local non-synced path, sufficient free disk space for input/archive/restored artifacts, and a separate copy step after measurement.
 
+Under WSL, a repository or dataset below `/mnt/c` crosses the WSL-to-NTFS
+boundary and can behave differently from a Linux-native filesystem or a native
+Windows run. Results from `/mnt/c` must identify that environment and must not
+be compared directly with results from another filesystem, operating mode, or
+cache state unless those conditions are deliberately controlled.
+
 No chunk or thread default is changed solely from one machine or dataset. Candidate defaults are adopted only after repeated tuning, acceptable memory behavior, deterministic output checks, and full SHA256 validation on representative structured and high-cardinality data.
 
-## Future Phase 5C: Chunked CsvColumnarDictionary Plan
+## Future `.dpack` v3 Design Boundary
 
-Phase 5C is design work until explicitly authorized for implementation. It must not be mixed into the v2 RawZstd pipeline optimization.
+`.dpack` v3 is design-only. There is no v3 reader, writer, or executable archive
+semantics, and neither v1 nor v2 is reinterpreted to prototype it. V2 remains
+chunked RawZstd; new structured chunk semantics require an explicit future
+version.
 
-### CSV-aware boundaries
+The design explores a truly chunked structured archive in which a column or
+chunk can select an explicitly encoded strategy such as Plain, Dictionary,
+RLE, Delta, BitPacking, or RawZstd. That list is a design space, not a promise
+that every strategy will ship. RawZstd remains the safe fallback when
+structured parsing is unsafe, unsupported, or not beneficial.
 
-A raw byte offset is not safe for a columnar transform. The boundary scanner must carry RFC 4180 quote state and must never split:
+Any future v3 implementation must preserve the following boundaries:
 
-- inside a quoted field
-- between the two quotes of an escaped quote
-- in the middle of a CRLF record terminator
+- reconstruction remains byte-for-byte exact, including delimiter choice,
+  quote spelling, escaped quotes, LF versus CRLF, whitespace, empty fields,
+  UTF-8 bytes, and final-newline presence;
+- record-aware chunk boundaries never split quoted fields, escaped-quote
+  pairs, or CRLF terminators;
+- parsing, dictionaries, metadata, offsets, chunk counts, and decompression
+  operate under explicit resource and integer-overflow limits;
+- independent chunk integrity and a global identity check provide corruption
+  isolation without weakening transactional output;
+- schema, dictionary, strategy, fallback, and payload ordering rules are
+  deterministic for the promised compatibility scope;
+- archives are hardware-neutral and universally decodable by the CPU path;
+  optional accelerators cannot create a separate archive format; and
+- malformed or malicious input returns an error rather than panicking or
+  forcing unbounded allocation.
 
-Reconstruction must preserve every original byte, including LF versus CRLF, quotes, escaped quotes, delimiters, leading and trailing spaces, UTF-8 byte sequences, empty fields, and final-newline presence.
+Implementation requires its own compatibility review, frozen fixtures,
+corruption and resource-limit tests, fuzzing, and representative performance
+evidence. Comparisons must keep dataset, validation level, filesystem, build
+profile, and cache conditions controlled and must cover v1 structured, v2
+RawZstd, the proposed v3 mode, and standalone zstd. No ratio or throughput
+claim follows from the design alone.
 
-### Schema and dictionary coordination
+## Current Product Boundaries
 
-Design alternatives must be measured rather than assumed:
-
-- per-chunk schemas versus one global schema
-- per-chunk dictionaries for bounded independent work
-- global dictionaries for maximum reuse
-- hybrid dictionaries with global common values and chunk-local extensions
-
-The format needs explicit reconstruction metadata and deterministic dictionary/ID ordering. Global metadata coordination must not require buffering the full source or all dictionaries without a documented memory bound.
-
-### Reliability and fallback
-
-Each columnar chunk needs its own original-byte SHA256 plus the archive global SHA256. A chunk that is malformed, unsafe, or not columnar-friendly must be able to fall back to RawZstd without compromising ordered reconstruction. Same input and options must choose the same boundaries, dictionaries, fallback decisions, and payload order.
-
-If these requirements do not fit the current v2 table and mode identifiers, the design must propose v3 or an explicitly documented compatible extension before implementation. Existing v2 files cannot be reinterpreted.
-
-### Required comparison
-
-Future benchmarks must compare:
-
-- v1 whole-file `CsvColumnarDictionary`
-- v2 chunked RawZstd
-- future versioned chunked columnar
-- standalone zstd
-
-Measurements must include ratio, compression and decompression throughput, peak memory, validation status, and workload character. Favorable repetitive CSVs and unfavorable high-cardinality/numeric data are both required.
-
-## Future Phase 5D: SIMD and Parser Optimization Plan
-
-SIMD is not implemented speculatively. Profiling first identifies stable hot paths among:
-
-- CSV scanning and record-boundary detection
-- delimiter and newline detection
-- the RFC 4180 parser
-- dictionary sizing and construction
-- numeric detection
-- columnar serialization and reconstruction
-- zstd compression
-- SHA256 hashing
-
-Candidate tools include:
-
-- `memchr` for measured byte-search hot loops
-- `bstr` for byte-oriented string operations
-- `csv-core` for a lower-level parser only if it preserves all reconstruction semantics
-- `simdutf8` only if UTF-8 validation is a measured cost and the relevant path requires validation
-
-Every change needs before/after benchmarks on representative data, byte-for-byte round-trip tests, malformed/quoted CSV coverage, and continued fuzzing. Parser replacement has a higher compatibility risk than local scanning improvements and requires its own format-neutral validation phase.
-
-## Future Phase 5E: Optional LZ4 Backend Plan
-
-An optional LZ4 mode may be useful when throughput matters more than ratio, such as temporary files, logs, fast local transfer, or disposable local caches. It would be an explicit ultra-fast tradeoff with a lower expected compression ratio, not a claim of universal superiority.
-
-Before implementation, the design must define a versioned mode identifier and whether LZ4 uses the existing chunk table or requires a new format version. It must remain lossless, store and verify global and per-chunk SHA256 where chunked, preserve deterministic ordering, and fail cleanly on unsupported archives.
-
-Evaluation must compare LZ4 with standalone zstd, v1 columnar, and v2 chunked RawZstd for ratio, compression/decompression throughput, memory, and full SHA256 validation. It is not a current backend.
-
-## Explicit Non-goals for These Phases
-
-- no GPU or VRAM processing
-- no SSD cache subsystem
-- no JSON or TOON format work
-- no ML-based planning
-- no speculative parser rewrite
-- no silent v1 or v2 format change
+- DataPack Desktop is not implemented.
+- GPU acceleration and adaptive CPU/GPU scheduling are not implemented. A GPU
+  is a possible execution backend, not an archive format; there is no
+  `.dpack-gpu` format.
+- Full v3 encoding and decoding are not implemented.
+- SIMD/parser replacement and an LZ4 archive mode remain unimplemented and
+  require independent evidence plus compatibility review.
+- There is no SSD cache subsystem, ML-based planning, cloud service, or
+  mandatory telemetry architecture.
+- No future work may silently change the v1 or v2 wire format.

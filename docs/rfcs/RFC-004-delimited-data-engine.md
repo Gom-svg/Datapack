@@ -6,6 +6,15 @@
 - Related: [RFC-001B](RFC-001B-compatible-analysis-core.md),
   [RFC-003](RFC-003-hard-bounded-analysis.md)
 
+> **Follow-up audit (2026-08-10):** The integration points deferred by this
+> historical Phase 5 decision were subsequently fulfilled and certified:
+> [RFC-004A](RFC-004A-delimited-analysis.md) connected the private engine to
+> multi-delimiter analysis, and
+> [RFC-004B](RFC-004B-safe-structured-delimited-compression.md) enabled the
+> audited byte-exact v1 structured routes for comma, semicolon, tab, and pipe.
+> The engine remains crate-private, and neither follow-up changed frozen v1/v2
+> metadata or container representations.
+
 ## 1. Decision
 
 Phase 5 introduces one crate-private, byte-oriented engine for delimited

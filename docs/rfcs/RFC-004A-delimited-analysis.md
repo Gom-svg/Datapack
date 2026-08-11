@@ -7,6 +7,15 @@
   [RFC-003](RFC-003-hard-bounded-analysis.md), and
   [RFC-004](RFC-004-delimited-data-engine.md)
 
+> **Follow-up audit (2026-08-10):** The Phase 7 structured-compression deferral
+> recorded below was fulfilled and certified by
+> [RFC-004B](RFC-004B-safe-structured-delimited-compression.md), which audited
+> and enabled byte-exact v1 structured compression for all four canonical
+> delimiters without changing the frozen container or metadata graph. The
+> historical legacy Benchmark boundary remains as documented; the later
+> [Compare RFC](RFC-005B-datapack-compare.md) provides factual multi-delimiter
+> comparison through its separate methodology.
+
 ## 1. Decision
 
 Phase 6 extends the `datapack analyze` adapter to recognize four delimited
