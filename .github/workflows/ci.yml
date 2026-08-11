@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust 1.85 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install the certified Rust toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+      - name: Report toolchain
+        run: rustc --version && cargo --version
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Check crate
+        run: cargo check --locked
+      - name: Run tests
+        run: cargo test --locked
+      - name: Run strict Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  python:
+    name: Python SDK foundation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install the certified Rust toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+      - name: Install Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install maturin
+        run: python -m pip install "maturin>=1.0,<2.0"
+      - name: Check binding formatting
+        run: cargo fmt --manifest-path python/Cargo.toml --check
+      - name: Check binding crate
+        run: cargo check --manifest-path python/Cargo.toml --locked
+      - name: Run binding test build
+        run: cargo test --manifest-path python/Cargo.toml --locked
+      - name: Run strict binding Clippy
+        run: cargo clippy --manifest-path python/Cargo.toml --all-targets -- -D warnings
+      - name: Build wheel
+        run: maturin build --manifest-path python/Cargo.toml --locked --interpreter python --out python/dist
+      - name: Install wheel
+        run: python -m pip install --force-reinstall python/dist/*.whl
+      - name: Run installed-package tests
+        run: python -m unittest discover -s python/tests -v
+
+  policy-and-package:
+    name: Dependency policy and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install the certified Rust toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Check dependency policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.85.0"
+          command: check
+      - name: Check Python binding dependency policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.85.0"
+          manifest-path: ./python/Cargo.toml
+          command: check
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit core dependencies
+        run: cargo audit
+      - name: Audit Python binding dependencies
+        run: cargo audit --file python/Cargo.lock
+      - name: Verify crate package
+        run: cargo package --locked
