@@ -267,6 +267,33 @@ At completion, tuning reports three recommendations:
 
 A sampled run can guide a shortlist, but always validate the selected configuration against a full representative file before treating it as a production setting.
 
+## Performance and Regression Suite
+
+The opt-in Phase 16 harness exercises deterministic generated workloads
+through the Rust Application API and emits a machine-readable JSON report. Its
+source hashes, archive routing, byte-exact restoration, typed validation, v2
+chunk structure, and same-run artifact stability are correctness gates.
+Elapsed time and throughput are observational fields and have no pass/fail
+threshold.
+
+```bash
+cargo bench --locked --bench performance_regression -- \
+  --preset smoke --runs 2 \
+  --output /tmp/datapack-performance-smoke.json
+
+cargo bench --locked --bench performance_regression -- \
+  --preset representative --runs 3 \
+  --output /tmp/datapack-performance-representative.json
+```
+
+Reports record the commit/toolchain/build, CPU and memory facts where
+available, WSL state, and input/output path classes. WSL `/mnt/c`, WSL
+Linux-native storage, native Linux, and native Windows measurements must not be
+silently pooled. The harness uses CPU execution; optional GPU inventory is
+metadata only. See the
+[performance regression methodology](docs/reference/PERFORMANCE_REGRESSION_METHODOLOGY.md)
+and [RFC-006](docs/rfcs/RFC-006-performance-regression-suite.md).
+
 ## Benchmarking Large Files
 
 Benchmark is the configurable legacy diagnostic workflow, not an alias for

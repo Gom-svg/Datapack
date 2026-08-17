@@ -22,5 +22,7 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 tempfile = "3.10"
 
 [[bench]]
-name = "size_placeholder"
+name = "performance_regression"
+path = "benches/performance_regression.rs"
 harness = false
+test = false
