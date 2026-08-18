@@ -356,7 +356,8 @@ No chunk or thread default is changed solely from one machine or dataset. Candid
 `.dpack` v3 is design-only. There is no v3 reader, writer, or executable archive
 semantics, and neither v1 nor v2 is reinterpreted to prototype it. V2 remains
 chunked RawZstd; new structured chunk semantics require an explicit future
-version.
+version. The complete Phase 17 proposal is
+[RFC-007 — `.dpack` v3 structured-chunk design](docs/rfcs/RFC-007-dpack-v3-structured-chunk-design.md).
 
 The design explores a truly chunked structured archive in which a column or
 chunk can select an explicitly encoded strategy such as Plain, Dictionary,

@@ -113,6 +113,14 @@ Compression uses a bounded reader/worker/ordered-writer pipeline. Chunks can fin
 
 Normal v2 decompression verifies each restored chunk and the global SHA256 by default, writes restoration through a temporary file, and commits the requested output only after the operation succeeds. `--no-verify` is an explicit unsafe speed-testing option; output from that run is not final integrity validation. Existing outputs are refused unless `--force` is supplied, and `--keep-temp` preserves a failed operation's sibling `.partial` file for debugging.
 
+### Future `.dpack` v3
+
+Phase 17 defines a design for bounded record-aware structured stripes with
+explicit per-column transforms and a chunked RawZstd fallback. It does not add
+a v3 reader, writer, CLI option, API variant, or executable archive semantics.
+V1 and v2 remain the only implemented formats. See
+[RFC-007 — `.dpack` v3 structured-chunk design](docs/rfcs/RFC-007-dpack-v3-structured-chunk-design.md).
+
 ```powershell
 datapack compress input.csv output.dpack --mode fast --chunked
 datapack compress input.csv output.dpack --mode fast --chunked --chunk-size-mb 128 --threads 8
