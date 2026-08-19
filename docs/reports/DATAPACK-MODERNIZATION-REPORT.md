@@ -1,8 +1,9 @@
 # DataPack modernization report
 
 - Status: **complete through Phase 17; final local certification passed**
-- Report date: 2026-08-17 (America/Costa_Rica)
-- Certification target: `7a46d47074f40b8279fc8b4c86705d60d233862c`
+- Report date: 2026-08-18 (America/Costa_Rica)
+- Initial certification target: `7a46d47074f40b8279fc8b4c86705d60d233862c`
+- Second-recovery recertification target: `23f875bc06e7c883fb5cc72b4abe76075f7cc05e`
 - Phase 16 tag: `rfc-016-performance-regression-suite`
 - Phase 17 tag: `rfc-017-dpack-v3-design`
 - Certified toolchain: Rust/Cargo 1.85.0
@@ -32,6 +33,20 @@ package, compatibility, and performance-correctness gate. No protected archive
 hash changed. No v1/v2 wire semantic changed. No generated benchmark dataset,
 archive, restored output, JSON result, wheel, or multi-gigabyte external source
 was added to Git.
+
+### Evidence status vocabulary
+
+This report uses the following labels consistently:
+
+| Label | Meaning in this report |
+| --- | --- |
+| **IMPLEMENTED** | Executable behavior is present in the repository. |
+| **CERTIFIED** | The stated local correctness, compatibility, package, or policy gates passed at the named target. |
+| **EXPERIMENTAL** | Executable but non-default behavior with narrower evidence and no production-readiness claim. |
+| **OBSERVATIONAL** | Environment-specific evidence, including wall-clock measurements, that is not a deterministic failure threshold. |
+| **DESIGN ONLY** | A reviewed design boundary exists, but executable behavior is intentionally absent. |
+| **DEFERRED** | Work is outside this modernization scope and requires later authorization and acceptance gates. |
+| **NOT RUN** | A gate was configured or identified but was not executed by the local modernization session. |
 
 ## 2. Power-loss recovery provenance
 
@@ -74,6 +89,35 @@ Read-only recovery artifacts remain outside the repository:
 The empty patch/stat snapshots are expected: tracked Phase 16 work had already
 been committed, while the report was untracked and separately preserved byte
 for byte.
+
+### Second power interruption recovery
+
+The workstation lost power again after the first recovery had completed Phase
+16, Phase 17, and the initial modernization report. The second forensic pass
+found:
+
+- HEAD `23f875bc06e7c883fb5cc72b4abe76075f7cc05e` on `main`, ahead 39 and behind 0;
+- a clean worktree with no modified, deleted, or untracked files;
+- annotated Phase 16 and Phase 17 tags still pointing at their certified
+  commits;
+- complete Phase 16 source, tests, methodology, RFC, and observation report;
+- a complete documentation-only Phase 17 RFC with no v3 implementation; and
+- no truncated file, merge residue, unexpected commit, or unrelated user
+  change.
+
+The recovered-state classification was **G: modernization appears fully
+completed locally**. Work therefore resumed from `23f875b` at repository-wide
+recertification rather than recreating or replacing any prior work.
+
+The second-recovery snapshots remain outside the repository:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---:| --- |
+| `/tmp/datapack-second-recovery-status.txt` | 33 | `094dfdf6491ed66a98f49dffc424c3ee51a624188bdd85137f03492d90be6c41` |
+| `/tmp/datapack-second-recovery.patch` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `/tmp/datapack-second-recovery-stat.txt` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `/tmp/datapack-second-recovery-log.txt` | 2,072 | `8e8b468524c9e0c41feb4f0a7a5535c5f96307439f692e4ffd9fe5cf69224de1` |
+| `/tmp/datapack-second-recovery-commits.txt` | 1,770 | `3d45f8154aedf41e1acf77d97aef156052f95a447f558f109b424d868daa1301` |
 
 ## 3. Modernization phase record
 
@@ -126,6 +170,31 @@ container:
 The Rust Application API is the reusable service boundary. CLI and Python are
 adapters; neither parses service text nor reimplements planners, codecs,
 validation, comparison, or fallback.
+
+### Analyze, Facts, Policy, and service boundaries
+
+The **IMPLEMENTED** intelligence path separates observation from decision:
+Analyze and the Delimited Data Engine produce bounded factual models;
+`DatasetFacts` and coverage/limit diagnostics retain what was actually
+observed; and `PlannerPolicyV1` alone maps those facts into the established v1
+execution choices. The Advisor is a deterministic projection of those facts
+and policy outcomes, not another planner. The encoder validates the executable
+plan and safely falls back rather than inventing policy.
+
+The Delimited Data Engine is the shared byte-oriented, quote-aware scanner for
+comma, semicolon, tab, and pipe inputs. Validate provides read-only typed v1/v2
+structure and integrity evidence. Compare provides factual DataPack versus
+standalone-zstd measurements with complete per-run identity checks. The public
+Rust Application API supplies Analyze, Compress, Decompress, Validate,
+Compare, and Benchmark services to both CLI and Python adapters. The Python SDK
+is an **IMPLEMENTED** ABI3 foundation over those Rust services, not a duplicate
+compression stack and not a published PyPI product.
+
+Security is **CERTIFIED** for the documented local scope through bounded
+archive-controlled allocation, checked arithmetic, transactional output,
+corruption/mutation coverage, default v2 hashes, resource-limit tests, and
+dependency policy checks. This is not a claim of a completed external security
+audit.
 
 ### Designed but not implemented
 
@@ -206,8 +275,15 @@ all five smoke scenarios on WSL Linux-native `/tmp`:
 
 ## 6. Separate external Python beta evidence
 
+Historical benchmark tables and the historical 7,392,492,161-byte external
+run remain **OBSERVATIONAL** evidence from their recorded environments. That
+source was unavailable and the run was **NOT RUN** during either recovery. Its
+timing is not an official Phase 16 baseline, and Phase 16 neither rewrites the
+historical values nor depends on the external source.
+
 External Python Beta Test 001 remains separate functional/integrity evidence.
-It is not a repository fixture and is not part of CI.
+It is **OBSERVATIONAL** external beta evidence, not a repository fixture and
+not part of CI.
 
 | Fact | Value |
 | --- | --- |
@@ -256,9 +332,37 @@ and the Python lockfile's two `syn` major versions. `cargo audit` reported only
 `RUSTSEC-2025-0141`, the documented warning that bincode 1.3.3 is unmaintained;
 no vulnerability was reported.
 
-The hosted Linux/Windows GitHub Actions workflow was not executed by this local
-session. No hosted-CI success is claimed. The workflow and its read-only
-permissions remain committed for execution on push or pull request.
+### Second-recovery recertification
+
+The second recovery reran certification against clean report commit `23f875b`
+with Rust/Cargo 1.85.0 and Python 3.14.4:
+
+| Gate | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | PASS |
+| `cargo check --locked` | PASS |
+| `cargo test --locked` | PASS — 359 tests, 0 failures; 20.35 s wall time including incremental compilation |
+| strict all-target/all-feature Clippy | PASS |
+| `cargo build --release --locked` | PASS |
+| release `performance_regression`, smoke, two runs | PASS — all five scenarios; all correctness and stability gates |
+| second-recovery smoke JSON | **OBSERVATIONAL** — `/tmp/datapack-second-recovery-smoke-23f875b.json`, SHA-256 `97d57191841a04d527a2b8fa2881a1abf917568936a59ba5648b87f6682419d0` |
+| Python binding format/check/test/strict-Clippy | PASS |
+| isolated maturin wheel build/install | PASS — maturin 1.14.1, Python 3.14.4, ABI3 for Python >=3.9 |
+| installed-package Python tests | PASS — 4 tests, including v1, v2 multichunk, validation, byte equality, and typed failures |
+| core and Python `cargo deny check` | PASS with the same documented policy warnings |
+| core and Python `cargo audit` | PASS with only allowed `RUSTSEC-2025-0141` |
+| `cargo package --locked` | PASS — 149-file package contents verified and packaged crate compiled successfully |
+| protected fixture sizes and SHA-256 | PASS — all six values unchanged |
+| tracked-file/generated-artifact review | PASS — largest tracked file about 71 KiB; no generated benchmark result or wheel tracked |
+| `git diff --check` | PASS |
+
+The second-recovery release observation ran in WSL on Linux-native `/tmp` and
+is not compared with `/mnt/c`, NTFS, OneDrive, native Windows, or another
+machine as an algorithmic delta.
+
+Hosted GitHub CI is **CONFIGURED BUT NOT RUN ON THE LOCAL MODERNIZATION
+COMMITS**. No hosted-CI success is claimed. The Linux/Windows workflow and its
+read-only permissions remain committed for execution on push or pull request.
 
 ## 8. Protected compatibility evidence
 
@@ -321,6 +425,9 @@ This report is the only report-only change after that certified clean target.
 - V3 implementation requires new authorization and the staged fixture,
   resource, security, fuzz, compatibility, API, and observational evidence in
   RFC-007. Phase 17 itself provides no executable v3 behavior.
+- Desktop, GPU/hybrid compute, SaaS/cloud, PyPI publication, and executable v3
+  work are **DEFERRED** to a later productization program. No CUDA, NVIDIA,
+  AMD-specific, or other hardware-specific archive variant is authorized.
 
 ## 11. Final verdict
 
