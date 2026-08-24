@@ -683,6 +683,36 @@ integration remain **DEFERRED**. Desktop/Tauri and P5 remain **DEFERRED**; P5
 has not started. Failed run `32708310316` remains the historical record of the
 Windows-only `result_large_err` strict-Clippy failure and remediation above.
 
+## Productization Beta Test 002
+
+DataPack Productization Beta Test 002 — Progress + Cancellation +
+Transactional Safety — result **PASS**. This manual external productization
+validation used the Linux ABI3 wheel from hosted CI run `32710691878`, installed
+into an isolated virtual environment outside the repository.
+
+| Fact | Evidence |
+| --- | --- |
+| DataPack / distribution | `datapack` 0.1.0 / `datapack-engine` 0.1.0 |
+| Environment | Python 3.14.4; WSL2 Linux x86_64 |
+| Dataset | Deterministically generated external CSV; 134,219,306 bytes; 2,049,597 rows |
+| Original SHA-256 | `1c1e6ae1be35f8c6ae2f8548f0d1648715964fb5cf4cacd185edb4a25efe383c` |
+| Analyze | PASS — structured progress observed |
+| Cancelled compression | PASS — cancellation followed real progress; typed `CancelledError`; no final archive, `.partial`, or false terminal success |
+| Completed compression | PASS — `raw_zstd`; 55,615,065-byte archive; 2.4134x ratio; 58.56% reduction |
+| Archive validation | PASS — `valid=true`; source comparison `matched` |
+| Completed decompression | PASS — restored SHA-256 matched the original and independent byte comparison passed |
+| Cross-thread decompression cancellation | PASS — existing destination preserved; no `.partial` or false terminal success |
+
+The observed full-compression time of approximately 1.041 seconds is
+**OBSERVATIONAL** evidence from this specific environment and workload. It is
+not a controlled compression benchmark, performance threshold, or universal
+throughput claim. The external dataset is not a protected repository fixture,
+and this successful beta does not establish production readiness.
+
+The complete methodology, limitations, and result record are in
+`docs/productization/BETA-TEST-002.md`. P5 remains **DEFERRED** and has not
+started.
+
 ## Preserved external technical-beta evidence
 
 Beta Test 001 remains historical external technical-beta correctness evidence.
