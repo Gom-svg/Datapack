@@ -1,9 +1,11 @@
 # DataPack modernization report
 
 - Status: **complete through Phase 17; final local certification passed**
-- Report date: 2026-08-18 (America/Costa_Rica)
+- Initial report/certification date: 2026-08-18 (America/Costa_Rica)
+- Final update date: 2026-08-23 (America/Costa_Rica)
 - Initial certification target: `7a46d47074f40b8279fc8b4c86705d60d233862c`
 - Second-recovery recertification target: `23f875bc06e7c883fb5cc72b4abe76075f7cc05e`
+- Final report-head recertification target: `cd034a3b73a16db17fc19cf37cfe2401d1e6af95`
 - Phase 16 tag: `rfc-016-performance-regression-suite`
 - Phase 17 tag: `rfc-017-dpack-v3-design`
 - Certified toolchain: Rust/Cargo 1.85.0
@@ -257,10 +259,10 @@ placement, cache state, and load. They are not regression thresholds or
 cross-platform claims. Complete detail is in the
 [Phase 16 observation](PHASE-16-PERFORMANCE-OBSERVATION.md).
 
-### Final clean-HEAD smoke
+### Initial clean-HEAD smoke
 
-The final certification target ran the release bench profile with two runs for
-all five smoke scenarios on WSL Linux-native `/tmp`:
+The initial certification target ran the release bench profile with two runs
+for all five smoke scenarios on WSL Linux-native `/tmp`:
 
 - timestamp: `2026-08-18T03:13:04Z`;
 - commit: `7a46d47074f40b8279fc8b4c86705d60d233862c`;
@@ -281,9 +283,11 @@ source was unavailable and the run was **NOT RUN** during either recovery. Its
 timing is not an official Phase 16 baseline, and Phase 16 neither rewrites the
 historical values nor depends on the external source.
 
-External Python Beta Test 001 remains separate functional/integrity evidence.
-It is **OBSERVATIONAL** external beta evidence, not a repository fixture and
-not part of CI.
+External Python Beta Test 001 remains separate external technical-beta
+evidence. Its functional/integrity results are evidence of successful archive
+validation and byte-exact restoration, not performance evidence. Its timing
+measurements are **OBSERVATIONAL**. The source is not a repository fixture, and
+the run is not part of CI.
 
 | Fact | Value |
 | --- | --- |
@@ -299,11 +303,18 @@ not part of CI.
 | Restored SHA-256 | `fb785a71d2bc82e6480dc7fd63bcfc4632e9b94af643baefdc736fbbf234aca7` |
 | Independent byte comparison | PASS |
 
+The functional/integrity evidence above is distinct from performance evidence.
 The 1.59 GiB source is not in the repository. Its dev-profile wheel, WSL,
-`/mnt/c`, NTFS, and OneDrive conditions make its timings uncontrolled and
-unsuitable for comparison with the optimized `/tmp` observations.
+`/mnt/c`, NTFS, and OneDrive source-path conditions make its timings
+uncontrolled and unsuitable for comparison with the optimized `/tmp`
+observations or for promotion into Phase 16 evidence. Beta Test 001 explicitly
+forced v2 chunked RawZstd even though sampled analysis recommended structured
+compression, so its 4.7444x ratio does not demonstrate DataPack's
+structured-column advantage.
 
-## 7. Final local certification
+## 7. Local certification chronology
+
+### Initial certification
 
 Certification ran against clean commit `7a46d47` with Rust/Cargo 1.85.0.
 
@@ -360,6 +371,39 @@ The second-recovery release observation ran in WSL on Linux-native `/tmp` and
 is not compared with `/mnt/c`, NTFS, OneDrive, native Windows, or another
 machine as an algorithmic delta.
 
+### Final report-head recertification
+
+After the second-recovery report update was committed, final certification ran
+against clean HEAD `cd034a3b73a16db17fc19cf37cfe2401d1e6af95` with
+Rust/Cargo 1.85.0:
+
+| Gate | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | PASS |
+| `cargo check --locked` | PASS |
+| `cargo test --locked` | PASS — 359 Rust tests, 0 failures |
+| strict all-target/all-feature Clippy | PASS |
+| `cargo build --release --locked` | PASS |
+| Phase 16 release smoke harness, five scenarios, two runs | PASS — stable archive bytes where determinism is promised; byte-exact restoration; v2 exercised 19 chunks; all applicable v2 integrity checks |
+| Python binding tests | PASS |
+| Python strict Clippy | PASS |
+| actual maturin ABI3 wheel build and isolated wheel installation | PASS |
+| installed-package tests | PASS — 4 tests, 0 failures; v1 behavior, v2 multichunk behavior, validation, and typed failures exercised |
+| `cargo deny check` | PASS |
+| `cargo audit` | PASS with only the documented accepted bincode 1.3.3 unmaintained advisory |
+| `cargo package --locked` | PASS — 149 package files verified |
+| protected fixture sizes and SHA-256 values | PASS — unchanged |
+| `git diff --check` | PASS |
+| post-certification worktree | clean |
+
+The final report-head smoke artifact is **OBSERVATIONAL**:
+`/tmp/datapack-second-recovery-smoke-cd034a3.json`, SHA-256
+`854fa4824d1265d9a5dfa1d2cd406c0791d2822af527aec80244c5fb3d313b64`.
+It is not tracked and was generated in the local certification environment.
+Its timing remains contextual; its correctness assertions passed, and it must
+not be used as a universal performance baseline. Earlier `7a46d47` and
+`23f875b` smoke evidence remains part of the historical record above.
+
 Hosted GitHub CI is **CONFIGURED BUT NOT RUN ON THE LOCAL MODERNIZATION
 COMMITS**. No hosted-CI success is claimed. The Linux/Windows workflow and its
 read-only permissions remain committed for execution on push or pull request.
@@ -399,14 +443,23 @@ larger than 10 MiB. It is not tracked, was already governed by Phase 14's ignore
 policy, and was intentionally preserved rather than destructively cleaned
 during recovery.
 
-Immediately before this final report was created:
+Immediately before the initial modernization report was created:
 
 - HEAD was `7a46d47` and tagged `rfc-017-dpack-v3-design`;
 - `main...origin/main` was ahead 38 and behind 0;
 - the worktree was clean; and
 - no push had occurred.
 
-This report is the only report-only change after that certified clean target.
+The initial report was committed as `23f875b`. The second recovery found that
+commit at HEAD with `main` ahead 39 and behind 0 and a clean worktree, then
+recertified it before the recovery/report update was committed as `cd034a3`.
+Final report-head recertification then ran against that clean update:
+
+- final report-head: `cd034a3b73a16db17fc19cf37cfe2401d1e6af95`;
+- `main...origin/main` was ahead 40 and behind 0;
+- the worktree was clean;
+- the Phase 16 and Phase 17 annotated tags remained preserved; and
+- no push occurred.
 
 ## 10. Accepted limitations and future gates
 
