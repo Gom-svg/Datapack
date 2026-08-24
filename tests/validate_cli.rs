@@ -52,6 +52,12 @@ fn assert_validation_failure(output: &Output, code: &str) -> Value {
         "validation failure must exit 1: {}",
         combined_output(output)
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.starts_with("error[invalid_format]:"));
+    assert!(
+        stderr.contains("validation failed"),
+        "validation invalidity must retain a structured report and stable CLI error identity: {stderr}"
+    );
     let report = parse_report(output);
     assert_eq!(report["valid"], false);
     assert_eq!(report["diagnostics"][0]["code"], code);

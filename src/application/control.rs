@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::error::DatapackError;
+use crate::error::{DatapackError, ErrorCategory};
 
 use super::progress::{
     OperationKind, ProgressEmitter, ProgressObserver, ProgressPhase, ProgressState,
@@ -64,6 +64,23 @@ impl OperationError {
     /// Returns true only for the typed cooperative cancellation outcome.
     pub const fn is_cancelled(&self) -> bool {
         matches!(self, Self::Cancelled)
+    }
+
+    /// Returns a stable broad category without parsing the display message.
+    pub const fn category(&self) -> ErrorCategory {
+        match self {
+            Self::Cancelled => ErrorCategory::Cancellation,
+            Self::Failed(error) => error.category(),
+        }
+    }
+
+    /// Returns the stable error code, delegating ordinary failures to
+    /// [`DatapackError::code`].
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::Failed(error) => error.code(),
+        }
     }
 }
 

@@ -32,6 +32,8 @@ This report uses only these status labels:
 | Hosted P3 progress CI | **CERTIFIED** | run `32701817032` at technical checkpoint `6c40e70dc155930ff2f42931e4c650b5d6dddf49`; all 18 required jobs passed |
 | Hosted P3 documentation closure CI | **CERTIFIED** | run `32703591864` at checkpoint `138cdf1812191ad0e45d07f9feb009a1b29d6c6e`; all 18 required jobs passed |
 | Hosted P4 cancellation CI | **CERTIFIED** | run `32709843703` at Windows strict-Clippy remediation checkpoint `585074907c98a6ff3fe52d50fa9688b43fe5aaf7`; all 18 required jobs passed |
+| Certified pre-P5 checkpoint | **CERTIFIED** | `bc08ed570a21a32cd72a9c494e710dbe6ed09109` on `productization/foundation`, `origin/productization/foundation`, `main`, and `origin/main` |
+| Hosted pre-P5 branch CI | **CERTIFIED** | `productization/foundation` run `32712910071` and `main` run `32713671052`; both SUCCESS |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -47,7 +49,7 @@ This report uses only these status labels:
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
-| P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
+| P5 — Public API / Error Product Polish | **IMPLEMENTED**, locally **CERTIFIED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation pass all local gates. Hosted P5 execution is **NOT RUN** pending a separately authorized push. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
@@ -679,9 +681,10 @@ progress-callback-driven cancellation, while P3 callback-exception isolation
 remains unchanged.
 
 Python `KeyboardInterrupt` conversion and CLI Ctrl+C signal-to-token
-integration remain **DEFERRED**. Desktop/Tauri and P5 remain **DEFERRED**; P5
-has not started. Failed run `32708310316` remains the historical record of the
-Windows-only `result_large_err` strict-Clippy failure and remediation above.
+integration remain **DEFERRED**. Desktop/Tauri remained **DEFERRED** and P5
+had not started at this P4 closure point. Failed run `32708310316` remains the
+historical record of the Windows-only `result_large_err` strict-Clippy failure
+and remediation above.
 
 ## Productization Beta Test 002
 
@@ -710,8 +713,119 @@ throughput claim. The external dataset is not a protected repository fixture,
 and this successful beta does not establish production readiness.
 
 The complete methodology, limitations, and result record are in
-`docs/productization/BETA-TEST-002.md`. P5 remains **DEFERRED** and has not
-started.
+`docs/productization/BETA-TEST-002.md`. P5 had not started when this external
+test ran; its subsequent outcome is recorded below.
+
+## P5 public API and error experience outcome
+
+P5 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted P5 certification is
+**NOT RUN** because no push is authorized in this phase. P5 starts from the
+certified checkpoint `bc08ed570a21a32cd72a9c494e710dbe6ed09109`; the branch,
+upstream, worktree, index, and shared main recovery boundary were verified
+before editing.
+
+The read-only public-surface audit found that DataPack already had a coherent
+Application execution model: six typed Rust operations, versioned result
+reports, additive progress/control entry points, transactional output, a thin
+five-operation Python adapter, structured validation/comparison results, and
+clean CLI report/progress stream separation. P5 therefore preserves:
+
+- all simple, `*_with_progress`, and `*_with_control` Rust signatures;
+- every request and result shape;
+- all Python operation signatures and dictionary returns;
+- the existing Python exception hierarchy;
+- CLI numeric exit statuses and stdout/stderr roles;
+- validation invalidity and against mismatch as structured report outcomes;
+- comparison winners/differences as successful report facts; and
+- all P2 distribution, P3 progress, P4 cancellation, safe-default, resource,
+  transaction, and archive contracts.
+
+The audit also found the product-polish gaps addressed by P5:
+
+- `DatapackError` had typed variants but no uniform public category/code
+  helper, while adding a variant would break exhaustive downstream matching;
+- `OperationError` separated cancellation correctly but did not expose the
+  same stable helper surface;
+- Python structurally mapped Rust variants to useful subclasses, but those
+  classes lacked explicit machine-readable identity, operation docstrings
+  were absent, and the stub returned undifferentiated dictionaries;
+- CLI runtime errors had contextual prose and established exit values but no
+  stable displayed identifier; several primary command/positional help texts
+  required source-code knowledge; and
+- Python/reference documentation contained stale pre-certification Windows
+  wording and did not give one consolidated result/error/exit policy.
+
+P5 adds the non-exhaustive, Serde-adaptable `ErrorCategory` with stable
+snake-case values. Existing exhaustive `DatapackError` is unchanged and gains
+constant-time `category()` and `code()` helpers. `OperationError` gains the same
+helpers, preserving `Cancelled` versus `Failed(DatapackError)` and delegating
+ordinary identity to the wrapped error. Display messages and source chains are
+unchanged. The exact categories, codes, and mappings are documented in
+`docs/productization/PUBLIC_API_AND_ERRORS.md`.
+
+CLI runtime errors now render `error[stable_code]: contextual message` on
+stderr. Existing statuses remain unchanged: zero for success, one for general
+command/operation failure including a completed invalid validation, two for
+Clap usage and established invalid-input/output cases, and three for the
+established row-range failure. Structured report/data output remains on
+stdout. A completed invalid `validate --json` still emits its structured
+`valid=false` report and a nonzero status; failure before a report leaves
+stdout empty. Compare winners remain successful facts. Help now states path
+roles, scope, verification/overwrite defaults, limits, partial retention, and
+JSON behavior for the primary commands.
+
+Python retains all exception types and signatures. Exception classes now
+expose stable broad `category` and `code` attributes, and every subclass,
+including `CancelledError`, remains catchable as `DataPackError`. Rust variants
+continue mapping structurally rather than through message parsing. Runtime
+docstrings cover Analyze, Compress, Decompress, Validate, Compare,
+`ProgressEvent`, `CancellationToken`, option types, and exceptions. The Python
+3.9-compatible stub adds path/literal/callback types and report-specific
+`TypedDict` return descriptions without replacing the runtime dictionaries.
+
+Path and destination messages already carried role, path, OS source context,
+the explicit `--force` remedy, and transactional output status; focused P5
+tests now freeze those invariants without asserting platform-specific OS prose.
+Existing validation diagnostic codes keep resource-limit failures distinct
+from corruption and mismatch. No limit is weakened and no automatic retry is
+introduced.
+
+P5 adds no dependency, allocation or branch to successful codec hot paths,
+unsafe code, network action, telemetry, async runtime, format, planner rule, or
+execution engine. Error helpers are constant matches used only when callers or
+the CLI request identity. Future Desktop/IPC remains **DEFERRED**, while typed
+categories, stable identifiers, and versioned reports are adapter-friendly.
+P6 has not started.
+
+### P5 local certification
+
+| Gate | Status | Result |
+| --- | --- | --- |
+| Rust/Cargo toolchain | **CERTIFIED** | PASS — Rust/Cargo 1.85.0 |
+| `cargo fmt --all -- --check` | **CERTIFIED** | PASS |
+| `cargo check --locked` | **CERTIFIED** | PASS |
+| `cargo test --locked` | **CERTIFIED** | PASS — 382 tests, zero failures |
+| Strict locked Clippy | **CERTIFIED** | PASS — global `-D warnings` unchanged |
+| `cargo build --release --locked` | **CERTIFIED** | PASS |
+| Binding format/check/test/Clippy/release build | **CERTIFIED** | PASS — binding crate has zero Rust unit tests |
+| Product identity/version consistency | **CERTIFIED** | PASS — `datapack-engine` / `datapack` / `0.1.0` |
+| Python 3.9-target syntax, Ruff lint, and Ruff formatting | **CERTIFIED** | PASS |
+| Source SDK tests | **CERTIFIED** | PASS — 15 tests, zero failures |
+| CLI/API/error experience | **CERTIFIED** | PASS — focused help, error identity, stream, path, overwrite, validation, and exit-policy coverage plus the complete Rust suite |
+| Linux ABI3 wheel build and exact P2 certification | **CERTIFIED** | PASS — `cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64`, exact eight-member allowlist, 991,852 bytes, SHA-256 `d8bfd09b740b2e1fd3dbc8571b71dab143f181fc18f22783a2b4775c649eb146` |
+| Isolated installed-wheel SDK | **CERTIFIED** | PASS — five tests, zero failures; Python 3.14.4; repository and Rust/Cargo/maturin absent |
+| P3 progress / P4 cancellation regression | **CERTIFIED** | PASS — typed events, callback isolation, explicit/cross-thread cancellation, no false terminal success, and transactional cleanup remain tested |
+| `cargo deny` core and binding | **CERTIFIED** | PASS with existing non-failing unmatched-license and duplicate-`syn` warnings |
+| `cargo audit` 0.22.1 core and binding | **CERTIFIED** | PASS with only allowed `RUSTSEC-2025-0141` |
+| `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 166 files, 1.8 MiB, 436.4 KiB compressed, verification build passed |
+| Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
+| Beta Test 002 evidence | **CERTIFIED** | Preserved as historical PASS; its approximately 1.041-second timing remains **OBSERVATIONAL** |
+| Windows/MSVC and CPython 3.9–3.14 hosted P5 regression | **NOT RUN** | Requires the future authorized push; all 18 existing jobs remain configured unchanged |
+| `git diff --check` | **CERTIFIED** | PASS |
+
+PyPI, TestPyPI, crates.io, GitHub Releases, tags, pushes, merges, and registry
+credentials remain **NOT RUN**. DataPack is not claimed production-ready and
+has no external security audit.
 
 ## Preserved external technical-beta evidence
 

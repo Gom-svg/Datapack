@@ -43,14 +43,17 @@ pub use model::{
 };
 pub use progress::{OperationKind, ProgressEvent, ProgressObserver, ProgressPhase, ProgressState};
 
+/// Analyzes bounded source facts and returns planner advice with safe defaults.
 pub fn analyze(request: AnalyzeRequest) -> crate::error::Result<AnalysisReportV1> {
     read_ops::analyze(request)
 }
 
+/// Benchmarks the requested workload and returns factual versioned measurements.
 pub fn benchmark(request: BenchmarkRequest) -> crate::error::Result<BenchmarkReportV1> {
     benchmark::benchmark(request)
 }
 
+/// Benchmarks while synchronously reporting typed progress facts.
 pub fn benchmark_with_progress(
     request: BenchmarkRequest,
     observer: &mut dyn ProgressObserver,
@@ -58,6 +61,7 @@ pub fn benchmark_with_progress(
     benchmark::benchmark_with_progress(request, observer)
 }
 
+/// Benchmarks with composable progress observation and cooperative cancellation.
 pub fn benchmark_with_control(
     request: BenchmarkRequest,
     control: OperationControl<'_>,
@@ -65,6 +69,7 @@ pub fn benchmark_with_control(
     benchmark::benchmark_with_control(request, control)
 }
 
+/// Analyzes while synchronously reporting typed progress facts.
 pub fn analyze_with_progress(
     request: AnalyzeRequest,
     observer: &mut dyn ProgressObserver,
@@ -72,6 +77,7 @@ pub fn analyze_with_progress(
     read_ops::analyze_with_progress(request, observer)
 }
 
+/// Analyzes with composable progress observation and cooperative cancellation.
 pub fn analyze_with_control(
     request: AnalyzeRequest,
     control: OperationControl<'_>,
@@ -81,10 +87,15 @@ pub fn analyze_with_control(
 
 pub(crate) use read_ops::analyze_for_cli_with_progress;
 
+/// Validates an archive and returns invalidity or mismatch as structured facts.
+///
+/// A successful call may return `valid == false`; operational failure and
+/// cancellation remain separate result errors.
 pub fn validate(request: ValidateRequest) -> crate::error::Result<ValidationReportV1> {
     read_ops::validate(request)
 }
 
+/// Validates while synchronously reporting typed progress facts.
 pub fn validate_with_progress(
     request: ValidateRequest,
     observer: &mut dyn ProgressObserver,
@@ -92,6 +103,7 @@ pub fn validate_with_progress(
     read_ops::validate_with_progress(request, observer)
 }
 
+/// Validates with composable progress observation and cooperative cancellation.
 pub fn validate_with_control(
     request: ValidateRequest,
     control: OperationControl<'_>,
@@ -99,10 +111,15 @@ pub fn validate_with_control(
     read_ops::validate_with_control(request, control)
 }
 
+/// Compares DataPack and standalone zstd over the requested factual scope.
+///
+/// Winner and difference fields are successful report facts, not operation
+/// failures.
 pub fn compare(request: CompareRequest) -> crate::error::Result<ComparisonReportV1> {
     read_ops::compare(request)
 }
 
+/// Compares while synchronously reporting typed progress facts.
 pub fn compare_with_progress(
     request: CompareRequest,
     observer: &mut dyn ProgressObserver,
@@ -110,6 +127,7 @@ pub fn compare_with_progress(
     read_ops::compare_with_progress(request, observer)
 }
 
+/// Compares with composable progress observation and cooperative cancellation.
 pub fn compare_with_control(
     request: CompareRequest,
     control: OperationControl<'_>,
@@ -117,10 +135,12 @@ pub fn compare_with_control(
     read_ops::compare_with_control(request, control)
 }
 
+/// Compresses a source into a transactionally published DataPack archive.
 pub fn compress(request: CompressRequest) -> crate::error::Result<CompressionResultV1> {
     compress::compress(request)
 }
 
+/// Compresses while synchronously reporting typed progress facts.
 pub fn compress_with_progress(
     request: CompressRequest,
     observer: &mut dyn ProgressObserver,
@@ -128,6 +148,7 @@ pub fn compress_with_progress(
     compress::compress_with_progress(request, observer)
 }
 
+/// Compresses with composable progress observation and cooperative cancellation.
 pub fn compress_with_control(
     request: CompressRequest,
     control: OperationControl<'_>,
@@ -135,10 +156,12 @@ pub fn compress_with_control(
     compress::compress_with_control(request, control)
 }
 
+/// Decompresses a DataPack archive into transactionally published restored bytes.
 pub fn decompress(request: DecompressRequest) -> crate::error::Result<DecompressionResultV1> {
     decompress::decompress(request)
 }
 
+/// Decompresses while synchronously reporting typed progress facts.
 pub fn decompress_with_progress(
     request: DecompressRequest,
     observer: &mut dyn ProgressObserver,
@@ -146,6 +169,7 @@ pub fn decompress_with_progress(
     decompress::decompress_with_progress(request, observer)
 }
 
+/// Decompresses with composable progress observation and cooperative cancellation.
 pub fn decompress_with_control(
     request: DecompressRequest,
     control: OperationControl<'_>,

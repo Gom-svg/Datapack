@@ -125,8 +125,9 @@ exactly matching the original dataset.
   protected v1/v2 compatibility corpus.
 - Passing this test does not establish production readiness, an external
   security audit, or public package availability.
-- Python `KeyboardInterrupt`, CLI Ctrl+C signal integration, Desktop/Tauri, and
-  P5 remain **DEFERRED**.
+- Python `KeyboardInterrupt`, CLI Ctrl+C signal integration, and Desktop/Tauri
+  remain **DEFERRED**. P5 had not started at the time of this test; later phase
+  status is tracked in the Productization report.
 
 ## Conclusion
 
@@ -134,4 +135,5 @@ exactly matching the original dataset.
 structured progress, explicit cancellation, typed cancellation reporting,
 transactional output safety, successful retry, archive validation, exact
 restoration, and cross-thread Python cancellation on the recorded workload and
-environment. Timing remains **OBSERVATIONAL**, and P5 has not started.
+environment. Timing remains **OBSERVATIONAL**. P5 had not started when this
+external test was executed.

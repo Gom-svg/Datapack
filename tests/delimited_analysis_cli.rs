@@ -280,12 +280,12 @@ fn ambiguity_and_unsupported_input_are_deterministic() {
         (
             "ambiguous.data",
             b"a,b|c\n1,2|3\n",
-            "error: file is not valid CSV: ambiguous delimiter; candidates: comma (,), pipe (|)\n",
+            "error[invalid_csv]: file is not valid CSV: ambiguous delimiter; candidates: comma (,), pipe (|)\n",
         ),
         (
             "unsupported.data",
             b"alpha\nbeta\n",
-            "error: file is not valid CSV: no supported structured delimiter was detected; input is unsupported or unstructured\n",
+            "error[invalid_csv]: file is not valid CSV: no supported structured delimiter was detected; input is unsupported or unstructured\n",
         ),
     ];
 
@@ -315,7 +315,8 @@ fn inconsistent_width_is_rejected_for_every_alternate_delimiter() {
         );
         assert!(output.stdout.is_empty(), "{} emitted JSON", dialect.name);
         assert_eq!(
-            output.stderr, b"error: file is not valid CSV: row has 3 columns, expected 2\n",
+            output.stderr,
+            b"error[invalid_csv]: file is not valid CSV: row has 3 columns, expected 2\n",
             "{} width error",
             dialect.name
         );
@@ -397,7 +398,7 @@ fn alternate_header_detection_never_exceeds_or_disguises_its_bound() {
     assert!(limited.stdout.is_empty());
     assert_eq!(
         limited.stderr,
-        b"error: file is not valid CSV: delimited dialect detection could not safely complete within configured limits\n"
+        b"error[invalid_csv]: file is not valid CSV: delimited dialect detection could not safely complete within configured limits\n"
     );
 }
 

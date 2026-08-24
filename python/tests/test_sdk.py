@@ -81,7 +81,87 @@ class DataPackSdkTests(unittest.TestCase):
         with self.assertRaises(datapack.DataPackAnalysisError) as raised:
             datapack.analyze(missing)
         self.assertIsInstance(raised.exception, datapack.DataPackError)
+        self.assertEqual(raised.exception.category, "analysis")
+        self.assertEqual(raised.exception.code, "analysis_error")
         self.assertIn("analyze failed", str(raised.exception))
+        self.assertIn(str(missing), str(raised.exception))
+
+    def test_exception_hierarchy_and_machine_identity_are_stable(self) -> None:
+        expected = {
+            datapack.DataPackIOError: ("io", "io_error"),
+            datapack.DataPackFormatError: ("format", "format_error"),
+            datapack.DataPackConfigurationError: (
+                "configuration",
+                "configuration_error",
+            ),
+            datapack.DataPackAnalysisError: ("analysis", "analysis_error"),
+            datapack.DataPackOutputError: ("output", "output_error"),
+            datapack.DataPackOperationError: ("operation", "operation_error"),
+            datapack.DataPackTranslationError: (
+                "translation",
+                "translation_error",
+            ),
+            datapack.CancelledError: ("cancellation", "cancelled"),
+        }
+        for exception_type, (category, code) in expected.items():
+            self.assertTrue(issubclass(exception_type, datapack.DataPackError))
+            self.assertTrue(exception_type.__doc__)
+            exception = exception_type("context")
+            self.assertEqual(exception.category, category)
+            self.assertEqual(exception.code, code)
+            self.assertEqual(str(exception), "context")
+
+    def test_public_docstrings_describe_results_controls_and_safe_outputs(self) -> None:
+        expected = {
+            datapack.analyze: ("AnalysisReport", "partial", "cancellation"),
+            datapack.compress: (
+                "CompressionResult",
+                "overwrite",
+                "transactional",
+            ),
+            datapack.decompress: (
+                "DecompressionResult",
+                "verification",
+                "overwrite",
+            ),
+            datapack.validate: ("ValidationReport", "valid=False", "against"),
+            datapack.compare: ("ComparisonReport", "quick", "Winners"),
+            datapack.CancellationToken: ("Thread-safe", "cooperative", "reset"),
+            datapack.ProgressEvent: ("progress facts", "None", "successful"),
+            datapack.V1CompressionOptions: (
+                "Immutable",
+                "planner-selected",
+                "safety ceilings",
+            ),
+            datapack.V2CompressionOptions: (
+                "Immutable",
+                "bounded",
+                "process-RSS ceiling",
+            ),
+            datapack.DataPackError: ("Base exception", "DataPack SDK"),
+            datapack.CancelledError: ("cooperatively cancelled",),
+        }
+        for public_object, phrases in expected.items():
+            docstring = public_object.__doc__ or ""
+            for phrase in phrases:
+                self.assertIn(phrase, docstring)
+
+    def test_invalidity_and_destination_conflict_are_not_ambiguous(self) -> None:
+        malformed = self.directory / "malformed.dpack"
+        malformed.write_bytes(b"not a DataPack archive")
+        validation = datapack.validate(malformed)
+        self.assertFalse(validation["valid"])
+        self.assertTrue(validation["diagnostics"])
+
+        archive = self.directory / "existing.dpack"
+        archive.write_bytes(b"existing destination")
+        with self.assertRaises(datapack.DataPackFormatError) as raised:
+            datapack.compress(self.source, archive)
+        self.assertEqual(raised.exception.category, "format")
+        self.assertEqual(raised.exception.code, "format_error")
+        self.assertIn(str(archive), str(raised.exception))
+        self.assertIn("--force", str(raised.exception))
+        self.assertEqual(archive.read_bytes(), b"existing destination")
 
     def test_invalid_options_map_to_the_custom_exception(self) -> None:
         with self.assertRaises(datapack.DataPackConfigurationError):
@@ -203,6 +283,8 @@ class DataPackSdkTests(unittest.TestCase):
             datapack.compress(self.source, archive, cancellation=token)
 
         self.assertIsInstance(raised.exception, datapack.DataPackError)
+        self.assertEqual(raised.exception.category, "cancellation")
+        self.assertEqual(raised.exception.code, "cancelled")
         self.assertFalse(archive.exists())
 
     def test_progress_callback_can_explicitly_cancel_v2(self) -> None:

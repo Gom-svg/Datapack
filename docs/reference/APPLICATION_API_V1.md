@@ -262,8 +262,24 @@ P4 operation control.
 
 ## Errors and outputs
 
-Operational and format failures return `DatapackError`. Safe fallbacks and
-non-fatal output-cleanup conditions can instead appear in a successful
+Operational and format failures return the existing exhaustive
+`DatapackError`. P5 adds no variants: downstream exhaustive matching remains
+source-compatible. Instead, `DatapackError::category()` returns a broad typed
+`ErrorCategory`, and `DatapackError::code()` returns a stable snake-case
+variant identifier without parsing `Display` text. Standard source chains and
+human-readable context remain available.
+
+Control-aware calls retain `OperationError::Cancelled` and
+`OperationError::Failed(DatapackError)`. The same `category()` and `code()`
+helpers identify cancellation as `cancellation` / `cancelled` and delegate
+ordinary failures to the wrapped error. Cancellation therefore remains
+separate without changing `DatapackError`.
+
+Validation invalidity and against-source mismatch are successful
+`ValidationReportV1` outcomes whose `valid` field is false; an inability to
+perform validation is an error. Comparison winners/differences are successful
+`ComparisonReportV1` facts; an inability to compare is an error. Safe
+fallbacks and non-fatal cleanup conditions can instead appear in a successful
 operation's diagnostics.
 
 Compress and Decompress use transactional sibling temporary files. A final
@@ -273,6 +289,10 @@ of an owned partial artifact after failure.
 
 Analyze and Validate do not create result files. Compare and Benchmark manage
 their own temporary artifacts according to their documented cleanup settings.
+
+See the [Public API and Error Experience](../productization/PUBLIC_API_AND_ERRORS.md)
+for the current category/code table, adapter mappings, result distinctions,
+safe defaults, and CLI policy.
 
 ## Cancellation
 

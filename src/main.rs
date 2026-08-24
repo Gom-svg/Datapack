@@ -6,7 +6,7 @@ fn main() {
     let cli = <Cli as clap::Parser>::parse();
 
     if let Err(err) = run(cli) {
-        eprintln!("error: {err}");
+        eprintln!("error[{}]: {err}", err.code());
         std::process::exit(err.exit_code());
     }
 }

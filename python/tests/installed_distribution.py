@@ -71,6 +71,22 @@ class InstalledDistributionTests(unittest.TestCase):
         self.assertIsNone(shutil.which("rustc"))
         self.assertIsNone(shutil.which("maturin"))
 
+    def test_installed_api_has_typed_errors_typing_and_docstrings(self) -> None:
+        self.assertTrue(issubclass(datapack.CancelledError, datapack.DataPackError))
+        self.assertEqual(datapack.CancelledError.category, "cancellation")
+        self.assertEqual(datapack.CancelledError.code, "cancelled")
+        self.assertIn("CompressionResult", datapack.compress.__doc__ or "")
+        self.assertIn("transactional", datapack.compress.__doc__ or "")
+        self.assertIn("valid=False", datapack.validate.__doc__ or "")
+        self.assertIn("Thread-safe", datapack.CancellationToken.__doc__ or "")
+
+        missing = self.directory / "missing.csv"
+        with self.assertRaises(datapack.DataPackAnalysisError) as raised:
+            datapack.analyze(missing)
+        self.assertEqual(raised.exception.category, "analysis")
+        self.assertEqual(raised.exception.code, "analysis_error")
+        self.assertIn(str(missing), str(raised.exception))
+
     def test_v1_public_sdk_workflow_is_byte_exact(self) -> None:
         analysis = datapack.analyze(self.source, sample_mb=1)
         self.assertEqual(analysis["schema_version"], 1)

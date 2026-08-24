@@ -38,7 +38,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect bounded structured facts and the compression plan without writing an archive.
     Analyze {
+        /// Source flat-data file to analyze.
         input: PathBuf,
         /// Print the full preflight compression plan.
         #[arg(long)]
@@ -53,8 +55,11 @@ enum Command {
         #[arg(long, requires = "json")]
         pretty: bool,
     },
+    /// Create a transactional DataPack archive without replacing outputs by default.
     Compress {
+        /// Source flat-data file to compress.
         input: PathBuf,
+        /// Destination `.dpack` archive path.
         output: PathBuf,
         /// Compression planning mode.
         #[arg(long, value_enum, default_value_t = CompressMode::Fast)]
@@ -102,8 +107,11 @@ enum Command {
         #[arg(long)]
         max_memory_mb: Option<u64>,
     },
+    /// Restore a DataPack archive transactionally with verification enabled by default.
     Decompress {
+        /// Source `.dpack` archive path.
         input: PathBuf,
+        /// Destination path for the restored bytes.
         output: PathBuf,
         /// UNSAFE: skip v2 per-chunk and global SHA256 verification.
         #[arg(long)]
@@ -129,6 +137,7 @@ enum Command {
     },
     /// Validate an archive without creating restored output.
     Validate {
+        /// Source `.dpack` archive path.
         archive: PathBuf,
         /// Compare the verified restored identity with an original source file.
         #[arg(long)]
@@ -151,6 +160,7 @@ enum Command {
     },
     /// Compare DataPack with standalone zstd using factual measurements.
     Compare {
+        /// Source flat-data file to compare.
         input: PathBuf,
         /// Comparison scope: bounded Quick mode or complete Full mode.
         #[arg(long, value_enum, default_value_t = CompareModeArg::Quick)]
@@ -239,6 +249,7 @@ enum Command {
     },
     /// Benchmark DataPack against zstd-only compression.
     Benchmark {
+        /// Source flat-data file to benchmark.
         input: PathBuf,
         /// Emit machine-readable JSON.
         #[arg(long)]

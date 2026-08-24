@@ -20,10 +20,9 @@ unrelated PyPI distribution named `datapack` expecting this engine.
   (`manylinux_2_17_x86_64` / `manylinux2014_x86_64`); and
 - Windows MSVC x86_64 (`win_amd64`).
 
-P2 locally certifies one unchanged Linux ABI3 wheel across all six declared
-CPython minors. The committed hosted workflow builds one wheel per platform
-and reuses it across the same six-version matrix. The P2 Windows workflow is
-implemented but has not run at this unpushed checkpoint.
+P2 certifies one unchanged ABI3 wheel per platform across all six declared
+CPython minors. The hosted workflow builds once for Linux and once for Windows
+and reuses each platform wheel across its six-version matrix.
 
 Until registry publication is explicitly authorized, install only a reviewed
 wheel artifact:
@@ -84,7 +83,11 @@ Compression format is selected by an immutable `V1CompressionOptions` or
 `V2CompressionOptions` object; omitting `options` uses the Rust v1 defaults.
 Rust error variants map directly to typed subclasses of `DataPackError`, such
 as `DataPackAnalysisError`, `DataPackFormatError`, and `DataPackOutputError`.
-This mapping does not parse display strings.
+This mapping does not parse display strings. Every exception class has stable
+`category` and `code` attributes, and every SDK exception remains catchable as
+`DataPackError`. The installed functions and public progress/cancellation
+types provide concise runtime docstrings; `_native.pyi` describes each report
+dictionary with a `TypedDict` and uses literal types for closed option values.
 
 Resource arguments named `*_bytes` are byte counts; `sample_mb` and
 `max_input_mb` are MiB-style application controls. `max_chunks` applies to v2,
@@ -99,6 +102,24 @@ may still contain non-fatal diagnostics. V1 decompression reports
 `validate(against=...)` when complete restored identity must be checked.
 Validation of a readable but invalid archive normally returns a report with
 `valid=False`; failures to perform the operation raise a typed exception.
+Comparison winners/differences are successful report facts rather than
+exceptions.
+
+```python
+token = datapack.CancellationToken()
+
+try:
+    result = datapack.compress(
+        source,
+        archive,
+        progress=on_progress,
+        cancellation=token,
+    )
+except datapack.CancelledError:
+    print("cancelled before transactional commit")
+except datapack.DataPackError as error:
+    print(error.category, error.code, str(error))
+```
 
 ## Build and certify from a checkout
 
@@ -169,4 +190,7 @@ readiness or a public release.
 
 See
 [`docs/productization/PYTHON_DISTRIBUTION.md`](../docs/productization/PYTHON_DISTRIBUTION.md)
-for the complete distribution, CI, isolation, sdist, and publication policy.
+for the complete distribution, CI, isolation, sdist, and publication policy,
+and
+[`docs/productization/PUBLIC_API_AND_ERRORS.md`](../docs/productization/PUBLIC_API_AND_ERRORS.md)
+for the result, exception, and CLI error contract.

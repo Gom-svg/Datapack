@@ -227,6 +227,73 @@ fn structured_cli_surface_is_stable() {
     );
 }
 
+#[test]
+fn public_help_explains_roles_scopes_and_safe_defaults() {
+    let mut root = Cli::command();
+    let root_help = root.render_long_help().to_string();
+    assert!(root_help.contains("Lossless flat-data compression"));
+    assert!(root_help.contains("transactional DataPack archive"));
+    assert!(root_help.contains("verification enabled by default"));
+
+    let expected = [
+        (
+            "analyze",
+            [
+                "Source flat-data file",
+                "Maximum sample size",
+                "machine-readable JSON",
+            ],
+        ),
+        (
+            "compress",
+            [
+                "Destination `.dpack` archive",
+                "Existing outputs are protected by default",
+                "Preserve a sibling .partial",
+            ],
+        ),
+        (
+            "decompress",
+            [
+                "Source `.dpack` archive",
+                "verification enabled by default",
+                "Existing outputs are protected by default",
+            ],
+        ),
+        (
+            "validate",
+            [
+                "without creating restored output",
+                "original source file",
+                "working memory",
+            ],
+        ),
+        (
+            "compare",
+            [
+                "factual measurements",
+                "bounded Quick mode or complete Full mode",
+                "machine-readable JSON",
+            ],
+        ),
+        (
+            "benchmark",
+            ["benchmark", "timing runs", "machine-readable JSON"],
+        ),
+    ];
+
+    for (name, phrases) in expected {
+        let mut command = subcommand(&root, name).clone();
+        let help = command.render_long_help().to_string();
+        for phrase in phrases {
+            assert!(
+                help.contains(phrase),
+                "`datapack {name} --help` omitted {phrase:?}: {help}"
+            );
+        }
+    }
+}
+
 fn subcommand_names(command: &Command) -> BTreeSet<String> {
     command
         .get_subcommands()

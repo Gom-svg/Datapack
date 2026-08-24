@@ -1,7 +1,8 @@
 # Python SDK foundation
 
-Status: implemented SDK foundation (Phase 13), distributable wheel foundation
-certified on Linux in Productization P2
+Status: implemented SDK foundation; distributable wheel foundation certified
+on Linux and Windows in Productization P2; progress/cancellation certified in
+P3/P4; public API and error polish implemented in P5
 
 The Python package in `python/` is a thin PyO3 and maturin adapter over the
 public Rust Application API. It does not contain an independent compressor,
@@ -36,8 +37,8 @@ limits, transaction handling, and byte-exact restoration.
 - Build backend: maturin 1.x
 - Wheel ABI: CPython stable ABI with a Python 3.9 floor (`cp39-abi3`)
 - Linux wheel: GNU x86_64, manylinux2014 / glibc 2.17 floor
-- Windows wheel: MSVC x86_64; hosted build/test matrix implemented and awaiting
-  the first authorized P2 workflow run
+- Windows wheel: MSVC x86_64; hosted build/test matrix certified through
+  CPython 3.9–3.14
 - Dataframe dependencies: none
 
 Wheel builds require a complete DataPack checkout because the binding crate
@@ -58,6 +59,8 @@ datapack.compress(
     options=None,
     overwrite=False,
     keep_partial=False,
+    progress=None,
+    cancellation=None,
 )
 
 datapack.decompress(
@@ -70,6 +73,8 @@ datapack.decompress(
     max_memory_bytes=None,
     overwrite=False,
     keep_partial=False,
+    progress=None,
+    cancellation=None,
 )
 
 datapack.validate(
@@ -79,6 +84,8 @@ datapack.validate(
     max_output_bytes=None,
     max_chunks=None,
     max_memory_bytes=None,
+    progress=None,
+    cancellation=None,
 )
 
 datapack.compare(
@@ -87,6 +94,8 @@ datapack.compare(
     mode="quick",
     runs=3,
     max_input_mb=None,
+    progress=None,
+    cancellation=None,
 )
 ```
 
@@ -144,9 +153,21 @@ typed subclasses of `DataPackError`:
 - `DataPackTranslationError`
 - `CancelledError`
 
+Each exception class exposes stable `category` and `code` attributes for
+normal machine-readable handling. Every subclass, including `CancelledError`,
+remains catchable as `DataPackError`. Human-readable exception strings retain
+operation and path context.
+
 An invalid archive normally makes `validate()` return a report whose `valid`
 field is false. Operational failures, such as an unreadable path, raise an
-exception.
+exception. Compare winner/difference fields likewise belong to a successful
+report; inability to perform the comparison raises an exception.
+
+The installed public functions, `ProgressEvent`, `CancellationToken`, option
+classes, and exception types have runtime docstrings. `_native.pyi` preserves
+dictionary returns while describing them with report-specific `TypedDict`s,
+path-like inputs, literal option values, optional totals, progress callbacks,
+and cancellation.
 
 ## Limits and transaction semantics
 
@@ -221,7 +242,8 @@ platform wheel into each of six Python-version jobs.
 
 See [Python Distribution](../productization/PYTHON_DISTRIBUTION.md) for exact
 artifact tags, platform policy, CI design, sdist status, and publication
-boundaries.
+boundaries, and [Public API and Error Experience](../productization/PUBLIC_API_AND_ERRORS.md)
+for result/error distinctions and examples.
 
 ## Explicit non-goals
 

@@ -12,7 +12,7 @@ use datapack::error::DatapackError as RustDataPackError;
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyModule, PyType};
 use serde::Serialize;
 
 create_exception!(
@@ -70,7 +70,11 @@ create_exception!(
     "A DataPack operation was cooperatively cancelled."
 );
 
-/// Python handle for the shared Rust cancellation state.
+/// Thread-safe, monotonic cooperative cancellation control.
+///
+/// Call ``cancel()`` from the operation's progress callback or another Python
+/// thread, then pass the token through an operation's ``cancellation=``
+/// keyword. Cancellation is cooperative and cannot be reset.
 #[pyclass(name = "CancellationToken", module = "datapack", frozen)]
 struct PyCancellationToken {
     inner: RustCancellationToken,
@@ -95,7 +99,11 @@ impl PyCancellationToken {
     }
 }
 
-/// Immutable Python adaptation of the Rust application progress facts.
+/// Immutable progress facts emitted by the Rust Application API.
+///
+/// Byte and item totals are ``None`` when unknown. ``percentage`` is derived
+/// by Rust from byte counters, and ``terminal`` is true only for successful
+/// whole-operation completion.
 #[pyclass(name = "ProgressEvent", module = "datapack", frozen)]
 struct PyProgressEvent {
     #[pyo3(get)]
@@ -170,6 +178,12 @@ impl ProgressObserver for PythonProgressObserver {
     frozen,
     skip_from_py_object
 )]
+/// Immutable options for planner-selected DataPack v1 compression.
+///
+/// ``mode`` is ``"fast"`` or ``"best"``; ``sample_mb`` bounds analysis.
+/// Dictionary value and memory limits are safety ceilings, and
+/// ``verify_best`` explicitly materializes eligible candidates before keeping
+/// the smaller valid archive.
 struct PyV1CompressionOptions {
     #[pyo3(get)]
     mode: String,
@@ -231,6 +245,11 @@ impl PyV1CompressionOptions {
     frozen,
     skip_from_py_object
 )]
+/// Immutable options for bounded chunked RawZstd DataPack v2 compression.
+///
+/// Chunk size, worker count, and maximum in-flight chunks define the bounded
+/// pipeline. ``max_memory_bytes`` is a preflight admission check for configured
+/// in-flight chunk bytes, not a complete process-RSS ceiling.
 struct PyV2CompressionOptions {
     #[pyo3(get)]
     chunk_size_bytes: usize,
@@ -293,6 +312,23 @@ impl PyV2CompressionOptions {
     }
 }
 
+/// Analyze bounded structured facts and planner advice for a path.
+///
+/// Args:
+///     input: Source path accepted as ``str`` or ``os.PathLike``.
+///     sample_mb: Maximum analysis byte sample in MiB; other safety bounds can
+///         still make the report partial.
+///     progress: Optional synchronous callable receiving ``ProgressEvent``.
+///     cancellation: Optional explicit cooperative cancellation token.
+///
+/// Returns:
+///     An ``AnalysisReport`` dictionary. Inspect ``sampling`` for actual scope,
+///     completeness, bytes/records analyzed, and any reached limit.
+///
+/// Raises:
+///     DataPackAnalysisError: If the source cannot be analyzed.
+///     DataPackConfigurationError: If an argument is invalid.
+///     CancelledError: If explicit cancellation is accepted.
 #[pyfunction]
 #[pyo3(signature = (input, *, sample_mb = 64, progress = None, cancellation = None))]
 fn analyze(
@@ -316,6 +352,25 @@ fn analyze(
     )
 }
 
+/// Compress a source path into a transactional DataPack archive.
+///
+/// Args:
+///     input: Source path accepted as ``str`` or ``os.PathLike``.
+///     output: Destination ``.dpack`` path.
+///     options: ``V1CompressionOptions``, ``V2CompressionOptions``, or ``None``
+///         for Rust's safe v1 defaults.
+///     overwrite: Replace an existing regular destination only when true.
+///     keep_partial: Retain the owned sibling ``.partial`` after failure.
+///     progress: Optional synchronous callable receiving ``ProgressEvent``.
+///     cancellation: Optional explicit cooperative cancellation token.
+///
+/// Returns:
+///     A ``CompressionResult`` dictionary containing archive version, selected
+///     mode/backend, byte counts, diagnostics, and profiling facts.
+///
+/// Raises:
+///     DataPackError: If input, configuration, or transactional output fails.
+///     CancelledError: If explicit cancellation wins before commit.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -354,6 +409,27 @@ fn compress(
     )
 }
 
+/// Decompress a DataPack archive into a transactional restored output.
+///
+/// Args:
+///     archive: Source ``.dpack`` path.
+///     output: Destination path for restored bytes.
+///     verify: Verify v2 chunk/global hashes; enabled by default.
+///     max_output_bytes: Optional declared restored-size safety limit.
+///     max_chunks: Optional v2 chunk-table safety limit.
+///     max_memory_bytes: Optional approximate working-memory admission limit.
+///     overwrite: Replace an existing regular destination only when true.
+///     keep_partial: Retain the owned sibling ``.partial`` after failure.
+///     progress: Optional synchronous callable receiving ``ProgressEvent``.
+///     cancellation: Optional explicit cooperative cancellation token.
+///
+/// Returns:
+///     A ``DecompressionResult`` dictionary containing archive/mode/backend,
+///     archive/restored byte counts, verification, diagnostics, and profile.
+///
+/// Raises:
+///     DataPackError: If parsing, limits, verification, or output fails.
+///     CancelledError: If explicit cancellation wins before commit.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -401,6 +477,25 @@ fn decompress(
     )
 }
 
+/// Validate an archive without publishing a restored output.
+///
+/// Args:
+///     archive: Source ``.dpack`` path.
+///     against: Optional original source for full restored-identity comparison.
+///     max_output_bytes: Optional declared restored-size safety limit.
+///     max_chunks: Optional v2 chunk-table safety limit.
+///     max_memory_bytes: Optional validation working-memory bound; ``None`` uses
+///         Rust's 512 MiB default.
+///     progress: Optional synchronous callable receiving ``ProgressEvent``.
+///     cancellation: Optional explicit cooperative cancellation token.
+///
+/// Returns:
+///     A ``ValidationReport`` dictionary. A readable but invalid/mismatched
+///     archive returns ``valid=False`` with check and diagnostic codes.
+///
+/// Raises:
+///     DataPackError: If validation cannot be performed at all.
+///     CancelledError: If explicit cancellation is accepted.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -442,6 +537,24 @@ fn validate(
     )
 }
 
+/// Compare DataPack v1 with standalone zstd over a documented scope.
+///
+/// Args:
+///     input: Source path accepted as ``str`` or ``os.PathLike``.
+///     mode: ``"quick"`` for a bounded prefix or ``"full"`` for all bytes.
+///     runs: Timing runs from 1 through 25.
+///     max_input_mb: Optional Quick-mode prefix bound in MiB.
+///     progress: Optional synchronous callable receiving ``ProgressEvent``.
+///     cancellation: Optional explicit cooperative cancellation token.
+///
+/// Returns:
+///     A ``ComparisonReport`` dictionary. Winners/differences are successful
+///     report facts; an inability to compare raises ``DataPackError``.
+///
+/// Raises:
+///     DataPackConfigurationError: If mode, runs, or scope is invalid.
+///     DataPackError: If the comparison operation fails.
+///     CancelledError: If explicit cancellation is accepted.
 #[pyfunction]
 #[pyo3(signature = (
     input,
@@ -670,30 +783,84 @@ fn parse_compare_mode(value: &str) -> PyResult<CompareMode> {
     }
 }
 
+fn add_exception_type(
+    module: &Bound<'_, PyModule>,
+    name: &str,
+    exception: Bound<'_, PyType>,
+    category: &'static str,
+    code: &'static str,
+) -> PyResult<()> {
+    exception.setattr("category", category)?;
+    exception.setattr("code", code)?;
+    module.add(name, exception)
+}
+
 #[pymodule(gil_used = false)]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = module.py();
-    module.add("DataPackError", py.get_type::<DataPackError>())?;
-    module.add("DataPackIOError", py.get_type::<DataPackIOError>())?;
-    module.add("DataPackFormatError", py.get_type::<DataPackFormatError>())?;
-    module.add(
+    add_exception_type(
+        module,
+        "DataPackError",
+        py.get_type::<DataPackError>(),
+        "datapack",
+        "datapack_error",
+    )?;
+    add_exception_type(
+        module,
+        "DataPackIOError",
+        py.get_type::<DataPackIOError>(),
+        "io",
+        "io_error",
+    )?;
+    add_exception_type(
+        module,
+        "DataPackFormatError",
+        py.get_type::<DataPackFormatError>(),
+        "format",
+        "format_error",
+    )?;
+    add_exception_type(
+        module,
         "DataPackConfigurationError",
         py.get_type::<DataPackConfigurationError>(),
+        "configuration",
+        "configuration_error",
     )?;
-    module.add(
+    add_exception_type(
+        module,
         "DataPackAnalysisError",
         py.get_type::<DataPackAnalysisError>(),
+        "analysis",
+        "analysis_error",
     )?;
-    module.add("DataPackOutputError", py.get_type::<DataPackOutputError>())?;
-    module.add(
+    add_exception_type(
+        module,
+        "DataPackOutputError",
+        py.get_type::<DataPackOutputError>(),
+        "output",
+        "output_error",
+    )?;
+    add_exception_type(
+        module,
         "DataPackOperationError",
         py.get_type::<DataPackOperationError>(),
+        "operation",
+        "operation_error",
     )?;
-    module.add(
+    add_exception_type(
+        module,
         "DataPackTranslationError",
         py.get_type::<DataPackTranslationError>(),
+        "translation",
+        "translation_error",
     )?;
-    module.add("CancelledError", py.get_type::<CancelledError>())?;
+    add_exception_type(
+        module,
+        "CancelledError",
+        py.get_type::<CancelledError>(),
+        "cancellation",
+        "cancelled",
+    )?;
     module.add_class::<PyCancellationToken>()?;
     module.add_class::<PyV1CompressionOptions>()?;
     module.add_class::<PyV2CompressionOptions>()?;

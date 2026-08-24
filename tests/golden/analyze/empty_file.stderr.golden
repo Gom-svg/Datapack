@@ -1,1 +1,1 @@
-error: file is not valid CSV: file is not valid CSV within first 4 KB
+error[invalid_csv]: file is not valid CSV: file is not valid CSV within first 4 KB

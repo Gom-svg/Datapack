@@ -249,6 +249,15 @@ Python surface. It has no required pandas, Polars, or Spark dependency. See the
 [Cancellation API](docs/productization/CANCELLATION_API.md), and
 [Python build instructions](python/README.md).
 
+Rust `DatapackError` and control-aware `OperationError` expose stable typed
+categories and snake-case codes in addition to contextual display messages.
+Python maps Rust failures to an unchanged `DataPackError` subclass hierarchy
+whose classes expose `category` and `code`. CLI runtime failures render as
+`error[code]: message`; report data stays on stdout while errors/progress stay
+on stderr. Validation invalidity and comparison winners remain structured
+result facts rather than being confused with failures. See the
+[Public API and Error Experience](docs/productization/PUBLIC_API_AND_ERRORS.md).
+
 ## Experimental Hardware Tuning
 
 `datapack tune` runs a grid of v2 chunked RawZstd configurations and writes a CSV report. It supports the default `chunked-raw-zstd` backend and the explicit `zstd-mt-experimental` backend. It is an experimental measurement tool: recommendations apply to the measured dataset, storage path, zstd build, and hardware. It does not change DataPack defaults.
@@ -522,8 +531,9 @@ claim that a hosted run has succeeded; see the
 
 - The CLI, frozen v1/v2 readers and writers, four-delimiter v1 structured path,
   Validate, Compare, Advisor, and public Rust Application API are implemented.
-- The Python SDK is a checkout-based alpha foundation. It is not a statement
-  that production wheels, a broad in-memory API, or asynchronous operation are
+- The Python SDK is a certified wheel-first pre-1.0 alpha binary distribution
+  foundation for Linux/Windows x86_64 and CPython 3.9–3.14. It is not a public
+  release or a statement that broad in-memory or asynchronous operation is
   ready.
 - Native zstd multithreading is available only as the explicit non-default
   `zstd-mt-experimental` v2 Compress/Benchmark/Tune backend. No general speed

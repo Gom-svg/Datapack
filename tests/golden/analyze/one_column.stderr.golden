@@ -1,1 +1,1 @@
-error: file is not valid CSV: expected at least two CSV columns
+error[invalid_csv]: file is not valid CSV: expected at least two CSV columns

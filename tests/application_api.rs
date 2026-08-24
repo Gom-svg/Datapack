@@ -10,6 +10,7 @@ use datapack::application::{
     DecompressRequest, OperationControl, OperationError, OperationKind, ProgressEvent,
     ProgressPhase, ProgressState, V2CompressionOptions, ValidateRequest,
 };
+use datapack::error::{DatapackError, ErrorCategory};
 
 fn write_repetitive_csv(path: &std::path::Path, rows: usize) -> Vec<u8> {
     let mut bytes = Vec::from(&b"group,status,note\n"[..]);
@@ -513,11 +514,27 @@ fn ordinary_failures_remain_distinct_from_typed_cancellation() {
     let token = CancellationToken::new();
 
     let result = application::compress_with_control(
-        CompressRequest::new(missing, output),
+        CompressRequest::new(&missing, &output),
         OperationControl::new().with_cancellation(token),
     );
 
-    assert!(matches!(result, Err(OperationError::Failed(_))));
+    let error = result.expect_err("missing input must be an ordinary failure");
+    assert!(!error.is_cancelled());
+    assert_eq!(error.category(), ErrorCategory::Format);
+    assert_eq!(error.code(), "invalid_format");
+    assert!(error.to_string().contains("input path"));
+    assert!(error
+        .to_string()
+        .contains(missing.to_string_lossy().as_ref()));
+
+    let cancelled = OperationError::Cancelled;
+    assert!(cancelled.is_cancelled());
+    assert_eq!(cancelled.category(), ErrorCategory::Cancellation);
+    assert_eq!(cancelled.code(), "cancelled");
+
+    let format = OperationError::Failed(DatapackError::InvalidFormat("context".to_string()));
+    assert_eq!(format.category(), ErrorCategory::Format);
+    assert_eq!(format.code(), "invalid_format");
 }
 
 #[test]
@@ -1206,7 +1223,14 @@ fn existing_outputs_are_preserved_without_explicit_overwrite() {
     let output_sentinel = b"EXISTING_OUTPUT_MUST_SURVIVE";
     fs::write(&protected_archive, archive_sentinel).expect("write protected archive");
 
-    assert!(application::compress(CompressRequest::new(&input, &protected_archive)).is_err());
+    let error = application::compress(CompressRequest::new(&input, &protected_archive))
+        .expect_err("protected archive must require explicit overwrite");
+    assert_eq!(error.category(), ErrorCategory::Format);
+    assert_eq!(error.code(), "invalid_format");
+    assert!(error
+        .to_string()
+        .contains(protected_archive.to_string_lossy().as_ref()));
+    assert!(error.to_string().contains("--force"));
     assert_eq!(
         fs::read(&protected_archive).expect("read protected archive"),
         archive_sentinel
