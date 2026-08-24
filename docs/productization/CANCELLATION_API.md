@@ -1,8 +1,8 @@
 # DataPack cooperative cancellation API
 
-Status: **IMPLEMENTED** and locally **CERTIFIED** in P4. Hosted P4
-certification is **NOT RUN**. Python `KeyboardInterrupt` conversion and CLI
-signal integration are **DEFERRED**.
+Status: **IMPLEMENTED** and **CERTIFIED** locally and in hosted P4 CI run
+`32709843703`, where all 18 required jobs passed. Python `KeyboardInterrupt`
+conversion and CLI signal integration are **DEFERRED**.
 
 ## Architecture
 
@@ -178,11 +178,12 @@ to regain the GIL. Progress callbacks safely reattach as established in P3.
 
 ## Frontend status
 
-- Explicit Rust and Python cancellation: **IMPLEMENTED** and locally
-  **CERTIFIED**.
-- Python callback-driven explicit `token.cancel()`: **CERTIFIED** locally.
+- Explicit Rust and Python cancellation: **IMPLEMENTED** and **CERTIFIED**
+  locally and in hosted CI run `32709843703`.
+- Python callback-driven explicit `token.cancel()`: **CERTIFIED** locally and
+  in hosted CI.
 - Cancellation from another Python thread while detached Rust work runs:
-  **CERTIFIED** locally.
+  **CERTIFIED** locally and in hosted CI.
 - Python `KeyboardInterrupt`/Ctrl+C conversion: **DEFERRED**. The binding does
   not install signal handlers or claim portable interrupt conversion.
 - CLI Ctrl+C integration: **DEFERRED**. Current process-level termination was

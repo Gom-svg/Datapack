@@ -31,6 +31,7 @@ This report uses only these status labels:
 | Hosted P2 final checkpoint CI | **CERTIFIED** | run `32699440785` at checkpoint `a433dbad5761a169681bdab64273938b86b291eb`; all 18 required jobs passed |
 | Hosted P3 progress CI | **CERTIFIED** | run `32701817032` at technical checkpoint `6c40e70dc155930ff2f42931e4c650b5d6dddf49`; all 18 required jobs passed |
 | Hosted P3 documentation closure CI | **CERTIFIED** | run `32703591864` at checkpoint `138cdf1812191ad0e45d07f9feb009a1b29d6c6e`; all 18 required jobs passed |
+| Hosted P4 cancellation CI | **CERTIFIED** | run `32709843703` at Windows strict-Clippy remediation checkpoint `585074907c98a6ff3fe52d50fa9688b43fe5aaf7`; all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -45,7 +46,7 @@ This report uses only these status labels:
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
-| P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally. Hosted run `32708310316` passed every functional and distribution job but failed Windows strict Clippy; the narrow portability remediation is pending a hosted rerun. |
+| P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
@@ -477,11 +478,12 @@ policy, dependency, CI workflow, or release/publication state changed in P3.
 
 ## P4 cooperative cancellation outcome
 
-P4 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted run `32708310316`
-passed every functional and distribution job but failed the Windows strict
-Clippy gate; the narrow remediation is pending a hosted rerun. The starting
-checkpoint was `138cdf1812191ad0e45d07f9feb009a1b29d6c6e`, whose P3 documentation
-closure passed all 18 hosted jobs in run `32703591864`.
+P4 is **IMPLEMENTED** and **CERTIFIED** locally and in hosted CI. The technical
+checkpoint is `c1d542c8cd2a472244868795786b47c6563aa25d`; its Windows strict-Clippy
+remediation is `585074907c98a6ff3fe52d50fa9688b43fe5aaf7`. Successful hosted run
+`32709843703` passed all 18 required jobs. The starting checkpoint was
+`138cdf1812191ad0e45d07f9feb009a1b29d6c6e`, whose P3 documentation closure
+passed all 18 hosted jobs in run `32703591864`.
 
 The initial read-only audit found no public cancellation primitive. The v2
 compression pipeline had a private `Arc<AtomicBool>` used only to stop sibling
@@ -603,7 +605,7 @@ latency or overhead claim.
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 163 files, 1.7 MiB, 422.7 KiB compressed, verification build passed |
 | Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
 | Progress and cancellation regression | **CERTIFIED** | PASS — no false terminal success on cancellation; never-cancelled controlled output remained byte-identical |
-| Windows and CPython 3.9–3.14 hosted P4 regression | **NOT RUN** | Run `32708310316` passed Windows tests, both platform wheel builds/inspection/uploads, and all 12 isolated CPython 3.9–3.14 executions, but the overall run failed Windows strict Clippy. A remediation rerun has not occurred. |
+| Windows and CPython 3.9–3.14 hosted P4 regression | **CERTIFIED** | PASS — all 18 required jobs passed in run `32709843703`, including Windows strict Clippy and isolated Linux and Windows wheel execution on CPython 3.9 through 3.14. |
 | `git diff --check` | **CERTIFIED** | PASS |
 
 ### P4 hosted Windows strict-Clippy remediation
@@ -637,8 +639,8 @@ The remediation moves the existing
 pre-P4 precedent, avoids an otherwise unnecessary error-path heap allocation,
 and does not change the error representation, cancellation/validation
 semantics, public API, serialization, archive behavior, or global strict
-Clippy policy. A native Windows strict-Clippy rerun is **NOT RUN** after this
-remediation; hosted Windows CI remains the required evidence.
+Clippy policy. At the remediation checkpoint, a native Windows strict-Clippy
+rerun was **NOT RUN** locally; subsequent hosted evidence is recorded below.
 
 Local remediation recertification is **CERTIFIED**: all 375 Rust tests, strict
 Linux Clippy, the binding gates, 12 source-SDK tests, the unchanged P2 wheel
@@ -651,6 +653,35 @@ eight-member allowlist, and is 988,667 bytes with SHA-256
 All six protected fixture sizes and SHA-256 values are unchanged. Native
 Windows strict Clippy is **NOT RUN** locally because this Linux/WSL environment
 has no Windows Rust target or native Windows toolchain installed.
+
+### P4 hosted certification closure
+
+Run `32709843703` — result **SUCCESS**, evidence status **CERTIFIED**, at
+Windows strict-Clippy remediation checkpoint
+`585074907c98a6ff3fe52d50fa9688b43fe5aaf7`. All 18 required hosted jobs
+passed:
+
+- Rust 1.85 on Ubuntu and Windows, including Windows strict Clippy;
+- the Python SDK foundation and dependency/package policy;
+- Linux GNU x86_64 and Windows MSVC x86_64 ABI3 wheel build, identity/tag/
+  metadata/content inspection, and CI artifact upload; and
+- isolated execution of each platform wheel on CPython 3.9, 3.10, 3.11, 3.12,
+  3.13, and 3.14.
+
+This hosted evidence certifies P4 without changing its contract:
+`CancellationToken` remains explicit typed operation control, cancellation
+remains separate from P3 progress, and `OperationControl` composes the two.
+Pre-commit cancellation prevents transactional publication; successful commit
+wins over a later cancellation request; and cancellation never emits false
+whole-operation terminal completion. Python retains typed
+`CancellationToken`/`CancelledError`, tested cross-thread and explicit
+progress-callback-driven cancellation, while P3 callback-exception isolation
+remains unchanged.
+
+Python `KeyboardInterrupt` conversion and CLI Ctrl+C signal-to-token
+integration remain **DEFERRED**. Desktop/Tauri and P5 remain **DEFERRED**; P5
+has not started. Failed run `32708310316` remains the historical record of the
+Windows-only `result_large_err` strict-Clippy failure and remediation above.
 
 ## Preserved external technical-beta evidence
 
