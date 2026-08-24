@@ -429,6 +429,24 @@ text, and makes Unix-only directory-builder mutability configuration-specific.
 DataPack is not fully hosted-certified until a subsequent hosted run passes
 every required job.
 
+### Second hosted CI execution
+
+Hosted CI run `32680846074` is **RUN — FAILED** with only the Windows strict
+Clippy gate remaining:
+
+- Python SDK foundation: PASS;
+- Dependency policy and package: PASS;
+- Rust 1.85 on `ubuntu-latest`: PASS;
+- Rust 1.85 on `windows-latest` formatting, `cargo check`, and all tests: PASS;
+  and
+- Rust 1.85 on `windows-latest` strict Clippy: FAILED on
+  `clippy::result_large_err` at the crate-private `V2ValidationError` boundary.
+
+The prior `cargo-audit` bootstrap incompatibility and Windows Phase 16 path
+classification failure are fixed, and native Windows tests now pass. Hosted
+certification remains incomplete until a subsequent run passes every required
+job.
+
 ## 8. Protected compatibility evidence
 
 The frozen compatibility manifest and files retain their exact bytes:

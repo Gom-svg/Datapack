@@ -1093,6 +1093,9 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
 /// `archive_info` must come from `read_v2_archive_info_with_limits` on the same
 /// reader. Payload memory is then bounded to one declared compressed chunk plus
 /// its declared restored size at a time.
+// Windows PathBuf layout makes this crate-private typed error exactly 128 bytes.
+// Preserve its validation stage/source contract without an additional allocation.
+#[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
     input: &mut R,
     archive_info: &ChunkedArchiveInfo,
