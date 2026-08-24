@@ -3,6 +3,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::time::{Duration, Instant};
 
 use crate::analysis;
+use crate::application::control::{uncontrolled, CancellationToken, OperationResult};
 use crate::compression::planned::encode_for_plan_detailed;
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
@@ -39,17 +40,23 @@ fn warn_for_large_full_benchmark(
     source_size: u64,
     options: &BenchmarkRequest,
     events: &mut dyn FnMut(BenchmarkEvent),
-) {
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<()> {
     let full_flow = !options.estimate_only
         && options.max_input_mb.is_none()
         && !options.no_zstd_baseline
         && !options.no_roundtrip
         && !options.no_hash;
     if source_size > LARGE_BENCHMARK_WARNING_BYTES && full_flow {
-        events(BenchmarkEvent::Notice(BenchmarkNotice::LargeInput {
-            source_size_bytes: source_size,
-        }));
+        emit_event(
+            events,
+            BenchmarkEvent::Notice(BenchmarkNotice::LargeInput {
+                source_size_bytes: source_size,
+            }),
+            cancellation,
+        )?;
     }
+    Ok(())
 }
 
 fn benchmark_max_input_bytes(max_input_mb: Option<u64>) -> Result<Option<u64>> {
@@ -68,18 +75,27 @@ fn benchmark_max_input_bytes(max_input_mb: Option<u64>) -> Result<Option<u64>> {
 }
 
 pub(crate) fn execute(options: BenchmarkRequest) -> Result<BenchmarkExecution> {
-    execute_with_events(options, &mut |_| {})
+    uncontrolled(execute_with_events_and_control(options, &mut |_| {}, None))
 }
 
 pub(crate) fn execute_with_events(
     options: BenchmarkRequest,
     events: &mut dyn FnMut(BenchmarkEvent),
 ) -> Result<BenchmarkExecution> {
+    uncontrolled(execute_with_events_and_control(options, events, None))
+}
+
+pub(crate) fn execute_with_events_and_control(
+    options: BenchmarkRequest,
+    events: &mut dyn FnMut(BenchmarkEvent),
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<BenchmarkExecution> {
+    checkpoint(cancellation)?;
     let total_started = Instant::now();
     let mut profile_timings = ProfileTimings::default();
     let input = &options.input;
     let source_size = std::fs::metadata(input)?.len();
-    warn_for_large_full_benchmark(source_size, &options, events);
+    warn_for_large_full_benchmark(source_size, &options, events, cancellation)?;
     let runs_used = if options.quick {
         1
     } else {
@@ -98,6 +114,7 @@ pub(crate) fn execute_with_events(
     let phase_started = Instant::now();
     let mut analysis =
         analysis::analyze_path_with_scope(input, planning_sample_mb, benchmark_input_size)?;
+    checkpoint(cancellation)?;
     let analysis_was_limited = analysis.requires_raw_fallback();
     if !analysis_was_limited
         && !analysis::comma_structured_compression_eligible_path(
@@ -107,18 +124,24 @@ pub(crate) fn execute_with_events(
         )?
     {
         analysis.apply_comma_eligibility_fallback();
-        events(BenchmarkEvent::Notice(
-            BenchmarkNotice::CommaEligibilityFallback,
-        ));
+        emit_event(
+            events,
+            BenchmarkEvent::Notice(BenchmarkNotice::CommaEligibilityFallback),
+            cancellation,
+        )?;
     }
     profile_timings.planning_ms = Some(elapsed_ms(phase_started));
-    events(BenchmarkEvent::Phase {
-        name: "planning",
-        state: BenchmarkEventState::Completed,
-        processed_bytes: 0,
-        total_bytes: None,
-        started: phase_started,
-    });
+    emit_event(
+        events,
+        BenchmarkEvent::Phase {
+            name: "planning",
+            state: BenchmarkEventState::Completed,
+            processed_bytes: 0,
+            total_bytes: None,
+            started: phase_started,
+        },
+        cancellation,
+    )?;
     if analysis_was_limited {
         let limitation_codes = analysis
             .facts
@@ -126,9 +149,11 @@ pub(crate) fn execute_with_events(
             .iter()
             .map(|limitation| limitation.code())
             .collect::<Vec<_>>();
-        events(BenchmarkEvent::Notice(BenchmarkNotice::AnalysisLimited {
-            limitation_codes,
-        }));
+        emit_event(
+            events,
+            BenchmarkEvent::Notice(BenchmarkNotice::AnalysisLimited { limitation_codes }),
+            cancellation,
+        )?;
     }
     let estimated_mode = analysis.plan.archive_mode;
 
@@ -156,6 +181,7 @@ pub(crate) fn execute_with_events(
             total_started,
             profile_timings,
             events,
+            cancellation,
         );
     }
     let execution_plan = ColumnExecutionPlan::from_compression_plan(
@@ -171,6 +197,7 @@ pub(crate) fn execute_with_events(
         "benchmark read input",
         events,
     )?;
+    checkpoint(cancellation)?;
     profile_timings.read_input_ms = Some(elapsed_ms(phase_started));
 
     let hash_enabled = !options.no_hash && !options.no_roundtrip;
@@ -188,15 +215,20 @@ pub(crate) fn execute_with_events(
     } else {
         let phase_started = Instant::now();
         let compressed = zstd_backend::compress(&bytes)?;
+        checkpoint(cancellation)?;
         let duration = phase_started.elapsed();
         profile_timings.zstd_only_ms = Some(duration_ms(duration));
-        events(BenchmarkEvent::Phase {
-            name: "zstd-only",
-            state: BenchmarkEventState::Completed,
-            processed_bytes: bytes.len() as u64,
-            total_bytes: Some(bytes.len() as u64),
-            started: phase_started,
-        });
+        emit_event(
+            events,
+            BenchmarkEvent::Phase {
+                name: "zstd-only",
+                state: BenchmarkEventState::Completed,
+                processed_bytes: bytes.len() as u64,
+                total_bytes: Some(bytes.len() as u64),
+                started: phase_started,
+            },
+            cancellation,
+        )?;
         (Some(compressed), Some(duration))
     };
 
@@ -212,32 +244,46 @@ pub(crate) fn execute_with_events(
     let chunked_sample_path = temp_paths.chunked_sample.clone();
     let _temp_files = BenchmarkTempFiles::new(options.keep_temp, temp_paths.owned_paths());
     for run_index in 0..runs_used {
-        events(BenchmarkEvent::Notice(BenchmarkNotice::CompressRun {
-            run: run_index + 1,
-            total_runs: runs_used,
-        }));
+        emit_event(
+            events,
+            BenchmarkEvent::Notice(BenchmarkNotice::CompressRun {
+                run: run_index + 1,
+                total_runs: runs_used,
+            }),
+            cancellation,
+        )?;
         let start = Instant::now();
         let (archive, mode, error) =
             encode_for_plan_detailed(input, &bytes, estimated_mode, b',', &execution_plan)?;
+        checkpoint(cancellation)?;
         compression_times.push(start.elapsed());
-        events(BenchmarkEvent::Phase {
-            name: "benchmark encode+compress",
-            state: BenchmarkEventState::Completed,
-            processed_bytes: bytes.len() as u64,
-            total_bytes: Some(bytes.len() as u64),
-            started: start,
-        });
+        emit_event(
+            events,
+            BenchmarkEvent::Phase {
+                name: "benchmark encode+compress",
+                state: BenchmarkEventState::Completed,
+                processed_bytes: bytes.len() as u64,
+                total_bytes: Some(bytes.len() as u64),
+                started: start,
+            },
+            cancellation,
+        )?;
 
         let write_started = Instant::now();
         std::fs::write(&temp_path, &archive)?;
+        checkpoint(cancellation)?;
         archive_write_times.push(write_started.elapsed());
-        events(BenchmarkEvent::Phase {
-            name: "benchmark write archive",
-            state: BenchmarkEventState::Completed,
-            processed_bytes: archive.len() as u64,
-            total_bytes: Some(archive.len() as u64),
-            started: write_started,
-        });
+        emit_event(
+            events,
+            BenchmarkEvent::Phase {
+                name: "benchmark write archive",
+                state: BenchmarkEventState::Completed,
+                processed_bytes: archive.len() as u64,
+                total_bytes: Some(archive.len() as u64),
+                started: write_started,
+            },
+            cancellation,
+        )?;
 
         datapack = archive;
         selected_mode = mode;
@@ -251,21 +297,30 @@ pub(crate) fn execute_with_events(
     let mut restored = Vec::new();
     if !options.no_roundtrip {
         for run_index in 0..runs_used {
-            events(BenchmarkEvent::Notice(BenchmarkNotice::DecompressRun {
-                run: run_index + 1,
-                total_runs: runs_used,
-            }));
+            emit_event(
+                events,
+                BenchmarkEvent::Notice(BenchmarkNotice::DecompressRun {
+                    run: run_index + 1,
+                    total_runs: runs_used,
+                }),
+                cancellation,
+            )?;
             let start = Instant::now();
             let decoded_archive = storage::decode_archive(&datapack)?;
             restored = storage::restore_archive(&decoded_archive)?;
+            checkpoint(cancellation)?;
             decompression_times.push(start.elapsed());
-            events(BenchmarkEvent::Phase {
-                name: "benchmark decompress+decode",
-                state: BenchmarkEventState::Completed,
-                processed_bytes: decoded_archive.payload.len() as u64,
-                total_bytes: Some(decoded_archive.payload.len() as u64),
-                started: start,
-            });
+            emit_event(
+                events,
+                BenchmarkEvent::Phase {
+                    name: "benchmark decompress+decode",
+                    state: BenchmarkEventState::Completed,
+                    processed_bytes: decoded_archive.payload.len() as u64,
+                    total_bytes: Some(decoded_archive.payload.len() as u64),
+                    started: start,
+                },
+                cancellation,
+            )?;
         }
     } else {
         decompression_times.push(Duration::ZERO);
@@ -321,17 +376,21 @@ pub(crate) fn execute_with_events(
         let mut chunked_roundtrip_sha256_match = None;
 
         for run_index in 0..runs_used {
-            events(BenchmarkEvent::Notice(
-                BenchmarkNotice::ChunkedCompressRun {
+            emit_event(
+                events,
+                BenchmarkEvent::Notice(BenchmarkNotice::ChunkedCompressRun {
                     run: run_index + 1,
                     total_runs: runs_used,
-                },
-            ));
+                }),
+                cancellation,
+            )?;
             let started = Instant::now();
-            let stats = storage::chunked::encode_raw_zstd_chunked_file(
+            let (stats, _) = storage::chunked::encode_raw_zstd_chunked_file_with_control(
                 chunked_input,
                 &chunked_temp_path,
                 chunk_options,
+                cancellation,
+                &mut |_| {},
             )?;
             chunked_compression_times.push(started.elapsed());
             chunked_archive_size = stats.archive_size_bytes;
@@ -339,14 +398,16 @@ pub(crate) fn execute_with_events(
 
         if !options.no_roundtrip {
             for run_index in 0..runs_used {
-                events(BenchmarkEvent::Notice(
-                    BenchmarkNotice::ChunkedDecompressRun {
+                emit_event(
+                    events,
+                    BenchmarkEvent::Notice(BenchmarkNotice::ChunkedDecompressRun {
                         run: run_index + 1,
                         total_runs: runs_used,
-                    },
-                ));
+                    }),
+                    cancellation,
+                )?;
                 let started = Instant::now();
-                storage::chunked::decode_raw_zstd_chunked_file(
+                storage::chunked::decode_raw_zstd_chunked_file_with_control(
                     &chunked_temp_path,
                     &chunked_restore_path,
                     storage::chunked::ChunkedDecompressOptions {
@@ -355,6 +416,8 @@ pub(crate) fn execute_with_events(
                         keep_temp: options.keep_temp,
                         ..storage::chunked::ChunkedDecompressOptions::default()
                     },
+                    cancellation,
+                    &mut |_| {},
                 )?;
                 chunked_decompression_times.push(started.elapsed());
             }
@@ -456,12 +519,30 @@ pub(crate) fn execute_with_events(
     } else {
         BenchmarkArtifacts::default()
     };
+    checkpoint(cancellation)?;
     Ok(BenchmarkExecution::Measured {
         metrics: Box::new(metrics),
         profile_timings,
         mode_label: format!("{:?}", archive.metadata.payload_kind),
         artifacts,
     })
+}
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
+}
+
+fn emit_event(
+    events: &mut dyn FnMut(BenchmarkEvent),
+    event: BenchmarkEvent,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<()> {
+    checkpoint(cancellation)?;
+    events(event);
+    checkpoint(cancellation)
 }
 
 fn build_chunked_compress_options(

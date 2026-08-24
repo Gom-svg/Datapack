@@ -1,6 +1,8 @@
 """Thin path-based Python access to the DataPack Rust application API."""
 
 from ._native import (
+    CancelledError,
+    CancellationToken,
     DataPackAnalysisError,
     DataPackConfigurationError,
     DataPackError,
@@ -20,6 +22,8 @@ from ._native import (
 )
 
 __all__ = [
+    "CancelledError",
+    "CancellationToken",
     "DataPackError",
     "DataPackAnalysisError",
     "DataPackConfigurationError",

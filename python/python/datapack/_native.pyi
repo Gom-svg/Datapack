@@ -15,6 +15,15 @@ class DataPackAnalysisError(DataPackError): ...
 class DataPackOutputError(DataPackError): ...
 class DataPackOperationError(DataPackError): ...
 class DataPackTranslationError(DataPackError): ...
+class CancelledError(DataPackError): ...
+
+class CancellationToken:
+    """Thread-safe, monotonic cooperative cancellation control."""
+
+    def __init__(self) -> None: ...
+    def cancel(self) -> None: ...
+    @property
+    def is_cancelled(self) -> bool: ...
 
 class ProgressEvent:
     """Read-only progress facts emitted by the Rust application API."""
@@ -70,6 +79,7 @@ def analyze(
     *,
     sample_mb: int = 64,
     progress: Optional[ProgressCallback] = None,
+    cancellation: Optional[CancellationToken] = None,
 ) -> Report: ...
 def compress(
     input: Pathish,
@@ -79,6 +89,7 @@ def compress(
     overwrite: bool = False,
     keep_partial: bool = False,
     progress: Optional[ProgressCallback] = None,
+    cancellation: Optional[CancellationToken] = None,
 ) -> Report: ...
 def decompress(
     archive: Pathish,
@@ -91,6 +102,7 @@ def decompress(
     overwrite: bool = False,
     keep_partial: bool = False,
     progress: Optional[ProgressCallback] = None,
+    cancellation: Optional[CancellationToken] = None,
 ) -> Report: ...
 def validate(
     archive: Pathish,
@@ -100,6 +112,7 @@ def validate(
     max_chunks: Optional[int] = None,
     max_memory_bytes: Optional[int] = None,
     progress: Optional[ProgressCallback] = None,
+    cancellation: Optional[CancellationToken] = None,
 ) -> Report: ...
 def compare(
     input: Pathish,
@@ -108,4 +121,5 @@ def compare(
     runs: int = 3,
     max_input_mb: Optional[int] = None,
     progress: Optional[ProgressCallback] = None,
+    cancellation: Optional[CancellationToken] = None,
 ) -> Report: ...

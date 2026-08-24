@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::application::control::{CancellationToken, OperationError, OperationResult};
 use crate::error::{DatapackError, Result};
 use crate::metadata::{PayloadKind, CURRENT_VERSION};
 use crate::storage;
@@ -172,14 +173,17 @@ impl ValidationReportV1 {
     }
 }
 
-pub(crate) fn validate_path(
+pub(crate) fn validate_path_with_control(
     archive_path: &Path,
     against_path: Option<&Path>,
     options: ValidationOptions,
-) -> Result<ValidationReportV1> {
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<ValidationReportV1> {
+    checkpoint(cancellation)?;
     let source_identity = against_path
-        .map(|source_path| hash_regular_file(source_path, "against source"))
+        .map(|source_path| hash_regular_file(source_path, "against source", cancellation))
         .transpose()?;
+    checkpoint(cancellation)?;
     let archive_file = open_regular_file(archive_path, "archive")?;
     let archive_size = archive_file.metadata()?.len();
     let mut archive_reader = BufReader::new(archive_file);
@@ -196,8 +200,16 @@ pub(crate) fn validate_path(
     archive_reader.seek(SeekFrom::Start(0))?;
 
     let restored_identity = match version {
-        CURRENT_VERSION => validate_v1(&mut archive_reader, archive_size, options, &mut report),
-        storage::chunked::CHUNKED_VERSION => validate_v2(&mut archive_reader, options, &mut report),
+        CURRENT_VERSION => validate_v1(
+            &mut archive_reader,
+            archive_size,
+            options,
+            &mut report,
+            cancellation,
+        ),
+        storage::chunked::CHUNKED_VERSION => {
+            validate_v2(&mut archive_reader, options, &mut report, cancellation)
+        }
         unsupported => {
             report.checks.header = CheckStatusV1::Failed;
             report.fail(
@@ -210,18 +222,23 @@ pub(crate) fn validate_path(
 
     let restored_identity = match restored_identity {
         Ok(identity) => identity,
-        Err(failure) if failure.stage == FailureStage::Operational => {
+        Err(ValidationControlError::Cancelled) => return Err(OperationError::Cancelled),
+        Err(ValidationControlError::Failed(failure))
+            if failure.stage == FailureStage::Operational =>
+        {
             return Err(DatapackError::InvalidFormat(format!(
                 "archive became unreadable during validation: {}",
                 failure.message
-            )))
+            ))
+            .into())
         }
-        Err(failure) => {
+        Err(ValidationControlError::Failed(failure)) => {
             failure.apply(&mut report);
             return Ok(report);
         }
     };
 
+    checkpoint(cancellation)?;
     if let Some(source_identity) = source_identity {
         report.against.source_size_bytes = Some(source_identity.size);
         if source_identity == restored_identity {
@@ -236,8 +253,27 @@ pub(crate) fn validate_path(
         }
     }
 
+    checkpoint(cancellation)?;
     report.valid = true;
     Ok(report)
+}
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
+}
+
+enum ValidationControlError {
+    Cancelled,
+    Failed(ValidationFailure),
+}
+
+impl From<ValidationFailure> for ValidationControlError {
+    fn from(error: ValidationFailure) -> Self {
+        Self::Failed(error)
+    }
 }
 
 impl ValidationReportV1 {
@@ -292,7 +328,11 @@ fn validate_v1<R: Read + Seek>(
     archive_size: u64,
     options: ValidationOptions,
     report: &mut ValidationReportV1,
-) -> std::result::Result<ContentIdentity, ValidationFailure> {
+    cancellation: Option<&CancellationToken>,
+) -> std::result::Result<ContentIdentity, ValidationControlError> {
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        return Err(ValidationControlError::Cancelled);
+    }
     report.archive.format = Some(ArchiveFormatV1::DpackV1);
     report.checks.chunk_table = CheckStatusV1::NotApplicable;
     report.checks.per_chunk_sha256 = CheckStatusV1::NotAvailable;
@@ -316,8 +356,18 @@ fn validate_v1<R: Read + Seek>(
         PayloadKind::RawZstd | PayloadKind::Plain | PayloadKind::Dictionary
     ) {
         let mut hashing_writer = HashingWriter::default();
-        storage::restore_raw_zstd_stream(&metadata, reader, &mut hashing_writer)
-            .map_err(classify_v1_payload_failure)?;
+        match storage::restore_raw_zstd_stream_with_control(
+            &metadata,
+            reader,
+            &mut hashing_writer,
+            cancellation,
+        ) {
+            Ok(_) => {}
+            Err(OperationError::Cancelled) => return Err(ValidationControlError::Cancelled),
+            Err(OperationError::Failed(error)) => {
+                return Err(classify_v1_payload_failure(error).into())
+            }
+        }
         hashing_writer.finish()
     } else {
         let archive_size = report.archive.archive_size_bytes;
@@ -361,6 +411,9 @@ fn validate_v1<R: Read + Seek>(
     report.checks.payload_structure = CheckStatusV1::Passed;
     report.checks.decompression = CheckStatusV1::Passed;
     report.checks.restored_length = CheckStatusV1::Passed;
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        return Err(ValidationControlError::Cancelled);
+    }
     Ok(identity)
 }
 
@@ -368,7 +421,8 @@ fn validate_v2<R: Read + Seek>(
     reader: &mut R,
     options: ValidationOptions,
     report: &mut ValidationReportV1,
-) -> std::result::Result<ContentIdentity, ValidationFailure> {
+    cancellation: Option<&CancellationToken>,
+) -> std::result::Result<ContentIdentity, ValidationControlError> {
     report.archive.format = Some(ArchiveFormatV1::DpackV2);
     report.archive.payload_mode = Some(PayloadModeV1::ChunkedRawZstd);
 
@@ -386,39 +440,50 @@ fn validate_v2<R: Read + Seek>(
     report.archive.original_size_bytes = Some(info.original_size_bytes);
     report.archive.chunk_count = Some(info.chunk_count);
 
-    storage::chunked::validate_raw_zstd_chunked_payload(reader, &info).map_err(|error| {
-        use storage::chunked::V2ValidationStage;
-
-        let stage = error.stage;
-        let storage_message = error.into_datapack_error().to_string();
-        match stage {
-            V2ValidationStage::ChunkPayload => ValidationFailure::new(
-                "CHUNK_DECOMPRESSION_FAILED",
-                storage_message,
-                FailureStage::V2Payload,
-            ),
-            V2ValidationStage::ChunkLength => ValidationFailure::new(
-                "RESTORED_LENGTH_MISMATCH",
-                storage_message,
-                FailureStage::ChunkLength,
-            ),
-            V2ValidationStage::ChunkHash => ValidationFailure::new(
-                "CHUNK_HASH_MISMATCH",
-                "a v2 chunk SHA-256 does not match the stored digest".to_string(),
-                FailureStage::ChunkHash,
-            ),
-            V2ValidationStage::RestoredTotal => ValidationFailure::new(
-                "RESTORED_LENGTH_MISMATCH",
-                storage_message,
-                FailureStage::RestoredLength,
-            ),
-            V2ValidationStage::GlobalHash => ValidationFailure::new(
-                "GLOBAL_HASH_MISMATCH",
-                "the v2 global SHA-256 does not match the restored byte stream".to_string(),
-                FailureStage::GlobalHash,
-            ),
+    match storage::chunked::validate_raw_zstd_chunked_payload_with_control(
+        reader,
+        &info,
+        cancellation,
+    ) {
+        Ok(()) => {}
+        Err(storage::chunked::ControlledV2ValidationError::Cancelled) => {
+            return Err(ValidationControlError::Cancelled)
         }
-    })?;
+        Err(storage::chunked::ControlledV2ValidationError::Failed(error)) => {
+            use storage::chunked::V2ValidationStage;
+
+            let stage = error.stage;
+            let storage_message = error.into_datapack_error().to_string();
+            let failure = match stage {
+                V2ValidationStage::ChunkPayload => ValidationFailure::new(
+                    "CHUNK_DECOMPRESSION_FAILED",
+                    storage_message,
+                    FailureStage::V2Payload,
+                ),
+                V2ValidationStage::ChunkLength => ValidationFailure::new(
+                    "RESTORED_LENGTH_MISMATCH",
+                    storage_message,
+                    FailureStage::ChunkLength,
+                ),
+                V2ValidationStage::ChunkHash => ValidationFailure::new(
+                    "CHUNK_HASH_MISMATCH",
+                    "a v2 chunk SHA-256 does not match the stored digest".to_string(),
+                    FailureStage::ChunkHash,
+                ),
+                V2ValidationStage::RestoredTotal => ValidationFailure::new(
+                    "RESTORED_LENGTH_MISMATCH",
+                    storage_message,
+                    FailureStage::RestoredLength,
+                ),
+                V2ValidationStage::GlobalHash => ValidationFailure::new(
+                    "GLOBAL_HASH_MISMATCH",
+                    "the v2 global SHA-256 does not match the restored byte stream".to_string(),
+                    FailureStage::GlobalHash,
+                ),
+            };
+            return Err(ValidationControlError::Failed(failure));
+        }
+    }
 
     report.checks.payload_structure = CheckStatusV1::Passed;
     report.checks.decompression = CheckStatusV1::Passed;
@@ -668,11 +733,23 @@ impl Write for HashingWriter {
     }
 }
 
-fn hash_regular_file(path: &Path, purpose: &str) -> Result<ContentIdentity> {
+fn hash_regular_file(
+    path: &Path,
+    purpose: &str,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<ContentIdentity> {
     let mut reader = BufReader::new(open_regular_file(path, purpose)?);
+    hash_reader(&mut reader, cancellation)
+}
+
+fn hash_reader<R: Read>(
+    reader: &mut R,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<ContentIdentity> {
     let mut writer = HashingWriter::default();
     let mut buffer = [0u8; HASH_BUFFER_BYTES];
     loop {
+        checkpoint(cancellation)?;
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
@@ -783,4 +860,44 @@ fn mark_v2_structure_passed(checks: &mut ValidationChecksV1) {
     checks.payload_structure = CheckStatusV1::Passed;
     checks.chunk_table = CheckStatusV1::Passed;
     checks.trailing_data = CheckStatusV1::Passed;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read};
+
+    use super::*;
+
+    struct CancelAfterFirstRead {
+        inner: Cursor<Vec<u8>>,
+        cancellation: CancellationToken,
+        cancelled: bool,
+    }
+
+    impl Read for CancelAfterFirstRead {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.inner.read(buffer)?;
+            if read > 0 && !self.cancelled {
+                self.cancellation.cancel();
+                self.cancelled = true;
+            }
+            Ok(read)
+        }
+    }
+
+    #[test]
+    fn hashing_observes_cancellation_after_a_bounded_read() {
+        let cancellation = CancellationToken::new();
+        let mut reader = CancelAfterFirstRead {
+            inner: Cursor::new(vec![0x5a; HASH_BUFFER_BYTES * 2]),
+            cancellation: cancellation.clone(),
+            cancelled: false,
+        };
+
+        let result = hash_reader(&mut reader, Some(&cancellation));
+
+        assert!(matches!(result, Err(OperationError::Cancelled)));
+        assert!(cancellation.is_cancelled());
+        assert_eq!(reader.inner.position(), HASH_BUFFER_BYTES as u64);
+    }
 }

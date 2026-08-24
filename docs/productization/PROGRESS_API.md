@@ -1,8 +1,9 @@
 # DataPack progress API
 
 Status: **IMPLEMENTED** and **CERTIFIED** locally and in hosted CI in P3;
-evidence is recorded in the main Productization report. Cooperative
-cancellation remains **DEFERRED** to P4.
+evidence is recorded in the main Productization report. P4 now composes a
+separate explicit cooperative cancellation control beside this unchanged
+progress contract.
 
 ## Architecture
 
@@ -127,10 +128,11 @@ legacy Benchmark CLI and Application adapter consume the same internal typed
 Benchmark events, while the Application API presents them as `ProgressEvent`.
 
 The serializable facts and stable string identifiers can be bridged to future
-Desktop IPC without exposing codec or archive internals. P4 may compose a
-separate cooperative cancellation token beside the observer. P3 adds no dummy
-cancellation method, task runtime, async runtime, or cancellation-by-callback
-behavior.
+Desktop IPC without exposing codec or archive internals. P4 composes a
+separate cooperative `CancellationToken` beside the observer through
+`OperationControl`; callback return values and exceptions still cannot cancel
+an operation. See `CANCELLATION_API.md`. No task runtime or async runtime was
+added.
 
 ## Current limitations
 
@@ -140,4 +142,5 @@ behavior.
   callbacks additionally pay interpreter reattachment and object-allocation
   cost.
 - Event cadence is useful but not a stable telemetry sampling protocol.
-- No ETA model and no cancellation API are implemented.
+- No ETA model is implemented. Cooperative cancellation is a separate P4
+  control contract and does not change these progress facts.

@@ -6,17 +6,20 @@ report semantics remain documented by their existing V1 references and RFCs.
 
 ## Operations
 
-| Function pair | Request | Return type |
-|---|---|---|
-| `analyze`, `analyze_with_progress` | `AnalyzeRequest` | `AnalysisReportV1` |
-| `compress`, `compress_with_progress` | `CompressRequest` | `CompressionResultV1` |
-| `decompress`, `decompress_with_progress` | `DecompressRequest` | `DecompressionResultV1` |
-| `validate`, `validate_with_progress` | `ValidateRequest` | `ValidationReportV1` |
-| `compare`, `compare_with_progress` | `CompareRequest` | `ComparisonReportV1` |
-| `benchmark`, `benchmark_with_progress` | `BenchmarkRequest` | `BenchmarkReportV1` |
+| Existing functions | Control-aware function | Request | Return type |
+|---|---|---|---|
+| `analyze`, `analyze_with_progress` | `analyze_with_control` | `AnalyzeRequest` | `AnalysisReportV1` |
+| `compress`, `compress_with_progress` | `compress_with_control` | `CompressRequest` | `CompressionResultV1` |
+| `decompress`, `decompress_with_progress` | `decompress_with_control` | `DecompressRequest` | `DecompressionResultV1` |
+| `validate`, `validate_with_progress` | `validate_with_control` | `ValidateRequest` | `ValidationReportV1` |
+| `compare`, `compare_with_progress` | `compare_with_control` | `CompareRequest` | `ComparisonReportV1` |
+| `benchmark`, `benchmark_with_progress` | `benchmark_with_control` | `BenchmarkRequest` | `BenchmarkReportV1` |
 
-Every function returns `datapack::error::Result<T>`. The non-progress form is
-silent and performs the same operation without observer callbacks.
+Existing functions return `datapack::error::Result<T>`. The non-progress form
+is silent and performs the same operation without observer callbacks.
+Control-aware functions accept `OperationControl` and return
+`OperationResult<T>`, whose error is the typed `OperationError::Cancelled` or
+`OperationError::Failed(DatapackError)`.
 
 Advisor is not exported as a public application service in V1.
 
@@ -245,15 +248,17 @@ Observer callback time is caller wall time and can be included in operation
 duration. In particular, Benchmark progress callbacks may run while a measured
 reader or writer is active and can perturb reported timing. Callers that need
 the least callback-contaminated Benchmark measurements should use the silent
-`benchmark()` entry point. Progress observation cannot cancel or otherwise
-alter the operation.
+`benchmark()` entry point. Progress observation itself cannot cancel or
+otherwise alter the operation; a callback may separately invoke an explicit
+P4 cancellation token.
 
 An observer panic follows normal Rust unwinding. Transaction guards prevent a
 pre-commit observer panic from publishing a partial final output. Progress is
 not a cancellation or error-return channel.
 
 See `docs/productization/PROGRESS_API.md` for exact operation/phase identifiers,
-per-operation granularity, Python callback behavior, and the P4 boundary.
+per-operation granularity, Python callback behavior, and its separation from
+P4 operation control.
 
 ## Errors and outputs
 
@@ -271,14 +276,18 @@ their own temporary artifacts according to their documented cleanup settings.
 
 ## Cancellation
 
-Application API V1 has no cancellation token. Current bulk parser, codec,
-zstd, validation, and legacy Benchmark calls do not provide uniform polling
-points, so DataPack does not claim bounded-latency cooperative cancellation.
-Progress callbacks are observational and must not be treated as cancellation
-hooks.
+P4 adds a cloneable, thread-safe `CancellationToken` and composable
+`OperationControl` without changing the existing simple or progress-aware
+calls. Cancellation is monotonic, idempotent, and cooperative. It is checked
+at bounded reads, v2 ordered chunk boundaries, major v1 stages, validation and
+comparison blocks, Benchmark suboperations, and immediately before
+transactional commit. It is not promised to be instantaneous.
 
-Cancellation remains deferred until every long-running path can honor the
-same cleanup, transactional-commit, and Benchmark timing invariants.
+Progress callbacks remain observational. A callback may explicitly call
+`token.cancel()`, but return values, panics, and Python callback exceptions do
+not become cancellation protocols. See the
+[Cancellation API](../productization/CANCELLATION_API.md) for commit
+precedence, cleanup, granularity, and adapter semantics.
 
 ## Python consumer (non-normative)
 
@@ -286,10 +295,11 @@ The separate Python SDK foundation is a thin consumer of this Rust API. It
 currently exposes Analyze, Compress, Decompress, Validate, and Compare and
 converts the existing Rust reports to Python dictionaries; it does not define
 a second engine or result schema. P3 adds optional structured progress
-callbacks to those five calls by adapting these exact Rust facts. Benchmark,
-Advisor, and cancellation are not part of the Python surface. This note does
-not extend or change the normative Rust Application API V1 contract. See the
-[Python SDK foundation](PYTHON_SDK_FOUNDATION.md).
+callbacks to those five calls by adapting these exact Rust facts. P4 adds the
+optional cancellation token and typed cancellation exception to those same
+five calls. Benchmark and Advisor are not part of the Python surface. This note
+does not extend or change the normative Rust Application API V1 contract. See
+the [Python SDK foundation](PYTHON_SDK_FOUNDATION.md).
 
 ## Compatibility
 

@@ -7,71 +7,85 @@ use crate::error::{DatapackError, Result};
 use crate::metadata::{DpackMetadata, PayloadKind};
 use crate::storage;
 
+use super::control::{
+    uncontrolled, OperationContext, OperationControl, OperationError, OperationResult,
+};
 use super::io::{self, ObservedWriter};
 use super::model::{
     ArchiveModeV1, CodecBackendV1, DecompressRequest, DecompressionResultV1, OperationDiagnosticV1,
     OperationProfileV1,
 };
-use super::progress::{
-    OperationKind, ProgressEmitter, ProgressObserver, ProgressPhase, ProgressState,
-};
+use super::progress::{OperationKind, ProgressObserver, ProgressPhase, ProgressState};
 use super::validation::{
     operation_failed, validate_input_output_paths, validate_output_overwrite_policy,
 };
 
 pub(super) fn decompress(request: DecompressRequest) -> Result<DecompressionResultV1> {
-    let mut emitter = ProgressEmitter::silent(OperationKind::Decompress);
-    run(request, &mut emitter)
+    let mut context = OperationContext::silent(OperationKind::Decompress);
+    uncontrolled(run(request, &mut context))
 }
 
 pub(super) fn decompress_with_progress(
     request: DecompressRequest,
     observer: &mut dyn ProgressObserver,
 ) -> Result<DecompressionResultV1> {
-    let mut emitter = ProgressEmitter::observed(OperationKind::Decompress, observer);
-    run(request, &mut emitter)
+    let mut context = OperationContext::observed(OperationKind::Decompress, observer);
+    uncontrolled(run(request, &mut context))
+}
+
+pub(super) fn decompress_with_control(
+    request: DecompressRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<DecompressionResultV1> {
+    let mut context = OperationContext::controlled(OperationKind::Decompress, control);
+    run(request, &mut context)
 }
 
 fn run(
     request: DecompressRequest,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<DecompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<DecompressionResultV1> {
+    context.checkpoint()?;
     validate_input_output_paths(&request.archive, &request.output)?;
     validate_output_overwrite_policy(&request.output, request.overwrite)?;
     if request.max_output_bytes == Some(0) {
         return Err(DatapackError::InvalidFormat(
             "max_output_bytes must be greater than zero".to_string(),
-        ));
+        )
+        .into());
     }
     if request.max_chunks == Some(0) {
         return Err(DatapackError::InvalidFormat(
             "max_chunks must be greater than zero".to_string(),
-        ));
+        )
+        .into());
     }
     if request.max_memory_bytes == Some(0) {
         return Err(DatapackError::InvalidFormat(
             "max_memory_bytes must be greater than zero".to_string(),
-        ));
+        )
+        .into());
     }
 
     let output_existed = request.output.exists();
-    let result = decompress_inner(&request, emitter).map_err(|error| {
-        operation_failed(
+    let result = decompress_inner(&request, context).map_err(|error| match error {
+        OperationError::Cancelled => OperationError::Cancelled,
+        OperationError::Failed(error) => OperationError::Failed(operation_failed(
             "decompression",
             &request.archive,
             &request.output,
             output_existed,
             error,
-        )
+        )),
     })?;
-    emitter.succeeded();
+    context.succeeded();
     Ok(result)
 }
 
 fn decompress_inner(
     request: &DecompressRequest,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<DecompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<DecompressionResultV1> {
     let total_started = Instant::now();
     let archive_size = std::fs::metadata(&request.archive)?.len();
     let version = storage::archive_version_from_path(&request.archive).map_err(|error| {
@@ -82,7 +96,7 @@ fn decompress_inner(
     })?;
 
     if version == storage::chunked::CHUNKED_VERSION {
-        return decompress_v2(request, archive_size, total_started, emitter);
+        return decompress_v2(request, archive_size, total_started, context);
     }
 
     let file = File::open(&request.archive)?;
@@ -106,12 +120,12 @@ fn decompress_inner(
             metadata,
             reader,
             total_started,
-            emitter,
+            context,
         );
     }
 
     let read_started = Instant::now();
-    let archive_bytes = io::read_all(&request.archive, ProgressPhase::ReadingArchive, emitter)?;
+    let archive_bytes = io::read_all(&request.archive, ProgressPhase::ReadingArchive, context)?;
     let read_ms = duration_ms(read_started.elapsed());
     let archive =
         storage::decode_archive(&archive_bytes).map_err(|error| DatapackError::ArchiveParse {
@@ -119,15 +133,15 @@ fn decompress_inner(
             reason: error.to_string(),
         })?;
 
-    emitter.started(ProgressPhase::Decompressing, Some(archive_size));
+    context.started(ProgressPhase::Decompressing, Some(archive_size))?;
     let transform_started = Instant::now();
     let restored = storage::restore_archive(&archive)?;
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed(
+    context.completed(
         ProgressPhase::Decompressing,
         archive_size,
         Some(archive_size),
-    );
+    )?;
 
     let write_started = Instant::now();
     let (mut temp_output, temp_file) =
@@ -136,12 +150,14 @@ fn decompress_inner(
         BufWriter::with_capacity(io::IO_BUFFER_BYTES, temp_file),
         ProgressPhase::WritingOutput,
         Some(restored.len() as u64),
-        emitter,
+        context,
     );
     writer.write_all(&restored)?;
     writer.flush()?;
     writer.finish();
+    writer.checkpoint()?;
     drop(writer);
+    context.checkpoint()?;
     let cleanup_warning =
         temp_output.commit_with_cleanup_warning(&request.output, request.overwrite)?;
     let write_ms = duration_ms(write_started.elapsed());
@@ -176,21 +192,30 @@ fn decompress_v1_streaming(
     metadata: DpackMetadata,
     mut reader: BufReader<File>,
     total_started: Instant,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<DecompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<DecompressionResultV1> {
+    context.checkpoint()?;
+    let cancellation = context.cancellation().cloned();
     let (mut temp_output, temp_file) =
         storage::output::TempOutput::create(&request.output, request.keep_partial)?;
     let mut writer = ObservedWriter::new(
         BufWriter::with_capacity(io::IO_BUFFER_BYTES, temp_file),
         ProgressPhase::WritingOutput,
         Some(metadata.original_size),
-        emitter,
+        context,
     );
     let transform_started = Instant::now();
-    let restored_size = storage::restore_raw_zstd_stream(&metadata, &mut reader, &mut writer)?;
+    let restored_size = storage::restore_raw_zstd_stream_with_control(
+        &metadata,
+        &mut reader,
+        &mut writer,
+        cancellation.as_ref(),
+    )?;
     writer.flush()?;
     writer.finish();
+    writer.checkpoint()?;
     drop(writer);
+    context.checkpoint()?;
     let cleanup_warning =
         temp_output.commit_with_cleanup_warning(&request.output, request.overwrite)?;
     let transform_elapsed = transform_started.elapsed();
@@ -221,10 +246,11 @@ fn decompress_v2(
     request: &DecompressRequest,
     archive_size: u64,
     total_started: Instant,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<DecompressionResultV1> {
-    emitter.started(ProgressPhase::Decompressing, None);
+    context: &mut OperationContext<'_>,
+) -> OperationResult<DecompressionResultV1> {
+    context.started(ProgressPhase::Decompressing, None)?;
     let transform_started = Instant::now();
+    let cancellation = context.cancellation().cloned();
     let mut progress = |progress| {
         if let storage::chunked::ChunkedProgress::Decompression {
             chunks_completed,
@@ -233,7 +259,7 @@ fn decompress_v2(
             total_bytes,
         } = progress
         {
-            emitter.emit(
+            context.emit_unchecked(
                 ProgressPhase::Decompressing,
                 ProgressState::Advanced,
                 bytes_written,
@@ -243,7 +269,7 @@ fn decompress_v2(
             );
         }
     };
-    let (stats, cleanup_warning) = storage::chunked::decode_raw_zstd_chunked_file_with_progress(
+    let (stats, cleanup_warning) = storage::chunked::decode_raw_zstd_chunked_file_with_control(
         &request.archive,
         &request.output,
         storage::chunked::ChunkedDecompressOptions {
@@ -254,11 +280,13 @@ fn decompress_v2(
             force: request.overwrite,
             keep_temp: request.keep_partial,
         },
+        cancellation.as_ref(),
         &mut progress,
     )?;
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed_with_items(
+    context.emit_unchecked(
         ProgressPhase::Decompressing,
+        ProgressState::Completed,
         stats.original_size_bytes,
         Some(stats.original_size_bytes),
         stats.chunk_count,

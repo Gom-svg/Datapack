@@ -5,9 +5,10 @@ use std::time::Instant;
 
 use datapack::application::{
     self, AgainstStatusV1, AnalyzeRequest, ArchiveFormatV1, ArchiveModeV1, BenchmarkRequest,
-    BenchmarkScopeV1, BenchmarkValidationStatusV1, CheckStatusV1, CodecBackendV1, CompareMode,
-    CompareRequest, CompressRequest, CompressionFormat, DecompressRequest, OperationKind,
-    ProgressEvent, ProgressPhase, ProgressState, V2CompressionOptions, ValidateRequest,
+    BenchmarkScopeV1, BenchmarkValidationStatusV1, CancellationToken, CheckStatusV1,
+    CodecBackendV1, CompareMode, CompareRequest, CompressRequest, CompressionFormat,
+    DecompressRequest, OperationControl, OperationError, OperationKind, ProgressEvent,
+    ProgressPhase, ProgressState, V2CompressionOptions, ValidateRequest,
 };
 
 fn write_repetitive_csv(path: &std::path::Path, rows: usize) -> Vec<u8> {
@@ -127,6 +128,396 @@ fn partial_files(directory: &Path) -> Vec<PathBuf> {
                 .is_some_and(|name| name.ends_with(".partial"))
         })
         .collect()
+}
+
+#[test]
+fn cancellation_token_is_monotonic_idempotent_and_shared() {
+    let token = CancellationToken::new();
+    let clone = token.clone();
+
+    assert!(!token.is_cancelled());
+    assert!(!clone.is_cancelled());
+    clone.cancel();
+    clone.cancel();
+
+    assert!(token.is_cancelled());
+    assert!(clone.is_cancelled());
+}
+
+#[test]
+fn pre_cancelled_control_starts_no_output_work() {
+    let directory = tempfile::tempdir().expect("pre-cancel directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("cancelled.dpack");
+    fs::write(&input, b"pre-cancelled input").expect("write pre-cancel input");
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let result = application::compress_with_control(
+        CompressRequest::new(&input, &archive),
+        OperationControl::new().with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(!archive.exists());
+    assert!(partial_files(directory.path()).is_empty());
+}
+
+#[test]
+fn v1_compression_and_decompression_cancel_at_safe_stages() {
+    let directory = tempfile::tempdir().expect("v1 cancellation directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("input.dpack");
+    let restored = directory.path().join("restored.bin");
+    let original = (0u8..=255).cycle().take(512 * 1024).collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write v1 cancellation input");
+
+    let compression_token = CancellationToken::new();
+    let observer_token = compression_token.clone();
+    let mut compression_events = Vec::new();
+    let mut compression_observer = |event: &ProgressEvent| {
+        compression_events.push(*event);
+        if event.phase == ProgressPhase::Compressing && event.state == ProgressState::Started {
+            observer_token.cancel();
+        }
+    };
+    let result = application::compress_with_control(
+        CompressRequest::new(&input, &archive),
+        OperationControl::new()
+            .with_progress(&mut compression_observer)
+            .with_cancellation(compression_token),
+    );
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(!archive.exists());
+    assert!(!compression_events
+        .iter()
+        .any(|event| event.is_terminal_success()));
+
+    application::compress(CompressRequest::new(&input, &archive)).expect("create v1 archive");
+    let decompression_token = CancellationToken::new();
+    let observer_token = decompression_token.clone();
+    let mut decompression_events = Vec::new();
+    let mut decompression_observer = |event: &ProgressEvent| {
+        decompression_events.push(*event);
+        if event.phase == ProgressPhase::WritingOutput && event.state == ProgressState::Started {
+            observer_token.cancel();
+        }
+    };
+    let result = application::decompress_with_control(
+        DecompressRequest::new(&archive, &restored),
+        OperationControl::new()
+            .with_progress(&mut decompression_observer)
+            .with_cancellation(decompression_token),
+    );
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(!restored.exists());
+    assert!(!decompression_events
+        .iter()
+        .any(|event| event.is_terminal_success()));
+    assert_eq!(fs::read(&input).expect("read unchanged source"), original);
+}
+
+#[test]
+fn v2_compression_cancellation_preserves_existing_destination_and_bounds_cleanup() {
+    let directory = tempfile::tempdir().expect("v2 compression cancellation directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("existing.dpack");
+    let original = (0u8..=255)
+        .cycle()
+        .take(4 * 1024 * 1024)
+        .collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write v2 cancellation input");
+    fs::write(&archive, b"previous valid destination").expect("write previous destination");
+
+    let token = CancellationToken::new();
+    let observer_token = token.clone();
+    let mut events = Vec::new();
+    let mut observer = |event: &ProgressEvent| {
+        events.push(*event);
+        if event.phase == ProgressPhase::Compressing
+            && event.state == ProgressState::Advanced
+            && event
+                .total_items
+                .is_some_and(|total| event.completed_items == total)
+        {
+            observer_token.cancel();
+        }
+    };
+    let mut request = CompressRequest::new(&input, &archive);
+    request.format = CompressionFormat::V2(v2_options(64 * 1024));
+    request.overwrite = true;
+    let result = application::compress_with_control(
+        request,
+        OperationControl::new()
+            .with_progress(&mut observer)
+            .with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert_eq!(
+        fs::read(&archive).expect("read preserved destination"),
+        b"previous valid destination"
+    );
+    assert!(partial_files(directory.path()).is_empty());
+    assert!(events.iter().any(|event| {
+        event.phase == ProgressPhase::Compressing
+            && event
+                .total_items
+                .is_some_and(|total| event.completed_items == total)
+    }));
+    assert!(!events.iter().any(|event| event.is_terminal_success()));
+}
+
+#[test]
+fn v2_cancellation_honors_explicit_keep_partial_without_final_commit() {
+    let directory = tempfile::tempdir().expect("v2 keep-partial cancellation directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("cancelled.dpack");
+    fs::write(&input, vec![b'x'; 2 * 1024 * 1024]).expect("write keep-partial input");
+    let token = CancellationToken::new();
+    let observer_token = token.clone();
+    let mut observer = move |event: &ProgressEvent| {
+        if event.phase == ProgressPhase::Compressing && event.state == ProgressState::Advanced {
+            observer_token.cancel();
+        }
+    };
+    let mut request = CompressRequest::new(&input, &archive);
+    request.format = CompressionFormat::V2(v2_options(64 * 1024));
+    request.keep_partial = true;
+
+    let result = application::compress_with_control(
+        request,
+        OperationControl::new()
+            .with_progress(&mut observer)
+            .with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(!archive.exists());
+    let partials = partial_files(directory.path());
+    assert_eq!(partials.len(), 1);
+    assert!(fs::metadata(&partials[0]).expect("partial metadata").len() > 0);
+}
+
+#[test]
+fn v2_decompression_cancels_after_a_committed_chunk_without_final_output() {
+    let directory = tempfile::tempdir().expect("v2 decompression cancellation directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("input.dpack");
+    let restored = directory.path().join("restored.bin");
+    let original = (0u8..=255)
+        .cycle()
+        .take(2 * 1024 * 1024)
+        .collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write decompression cancellation input");
+    create_v2_archive(&input, &archive, 64 * 1024);
+
+    let token = CancellationToken::new();
+    let observer_token = token.clone();
+    let mut events = Vec::new();
+    let mut observer = |event: &ProgressEvent| {
+        events.push(*event);
+        if event.phase == ProgressPhase::Decompressing
+            && event.state == ProgressState::Advanced
+            && event.completed_items >= 1
+        {
+            observer_token.cancel();
+        }
+    };
+    let result = application::decompress_with_control(
+        DecompressRequest::new(&archive, &restored),
+        OperationControl::new()
+            .with_progress(&mut observer)
+            .with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(!restored.exists());
+    assert!(partial_files(directory.path()).is_empty());
+    assert!(!events.iter().any(|event| event.is_terminal_success()));
+    assert_eq!(
+        fs::read(&input).expect("read source after cancel"),
+        original
+    );
+}
+
+#[test]
+fn read_oriented_and_benchmark_operations_return_typed_cancellation() {
+    let directory = tempfile::tempdir().expect("read cancellation directory");
+    let input = directory.path().join("input.csv");
+    let archive = directory.path().join("input.dpack");
+    write_repetitive_csv(&input, 128);
+    create_v2_archive(&input, &archive, 1_024);
+
+    let run_cancelled =
+        |operation: OperationKind,
+         run: &mut dyn FnMut(OperationControl<'_>) -> Result<(), OperationError>| {
+            let (target_phase, target_state) = match operation {
+                OperationKind::Analyze => (ProgressPhase::Analyzing, ProgressState::Completed),
+                OperationKind::Validate => (ProgressPhase::Validating, ProgressState::Completed),
+                OperationKind::Compare => (ProgressPhase::Comparing, ProgressState::Completed),
+                _ => (ProgressPhase::Benchmarking, ProgressState::Started),
+            };
+            let token = CancellationToken::new();
+            let observer_token = token.clone();
+            let mut events = Vec::new();
+            let mut observer = |event: &ProgressEvent| {
+                events.push(*event);
+                if event.operation == operation
+                    && event.phase == target_phase
+                    && event.state == target_state
+                {
+                    observer_token.cancel();
+                }
+            };
+            let result = run(OperationControl::new()
+                .with_progress(&mut observer)
+                .with_cancellation(token));
+            assert!(matches!(result, Err(OperationError::Cancelled)));
+            assert!(!events.iter().any(|event| event.is_terminal_success()));
+        };
+
+    run_cancelled(OperationKind::Analyze, &mut |control| {
+        application::analyze_with_control(AnalyzeRequest::new(&input), control).map(|_| ())
+    });
+    run_cancelled(OperationKind::Validate, &mut |control| {
+        application::validate_with_control(ValidateRequest::new(&archive), control).map(|_| ())
+    });
+    run_cancelled(OperationKind::Compare, &mut |control| {
+        let mut request = CompareRequest::new(&input);
+        request.runs = 1;
+        application::compare_with_control(request, control).map(|_| ())
+    });
+    run_cancelled(OperationKind::Benchmark, &mut |control| {
+        let mut request = BenchmarkRequest::new(&input);
+        request.quick = true;
+        request.runs = 1;
+        application::benchmark_with_control(request, control).map(|_| ())
+    });
+}
+
+#[test]
+fn benchmark_cancellation_after_planning_prevents_remaining_measurements() {
+    let directory = tempfile::tempdir().expect("benchmark cancellation directory");
+    let input = directory.path().join("input.csv");
+    write_repetitive_csv(&input, 512);
+    let token = CancellationToken::new();
+    let observer_token = token.clone();
+    let mut events = Vec::new();
+    let mut observer = |event: &ProgressEvent| {
+        events.push(*event);
+        if event.phase == ProgressPhase::Planning && event.state == ProgressState::Completed {
+            observer_token.cancel();
+        }
+    };
+    let mut request = BenchmarkRequest::new(&input);
+    request.quick = true;
+    request.runs = 1;
+
+    let result = application::benchmark_with_control(
+        request,
+        OperationControl::new()
+            .with_progress(&mut observer)
+            .with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Cancelled)));
+    assert!(events.iter().any(|event| {
+        event.phase == ProgressPhase::Planning && event.state == ProgressState::Completed
+    }));
+    assert!(!events
+        .iter()
+        .any(|event| event.phase == ProgressPhase::Compressing));
+    assert!(!events.iter().any(|event| event.is_terminal_success()));
+}
+
+#[test]
+fn successful_commit_wins_over_late_cancellation_and_still_completes_progress() {
+    let directory = tempfile::tempdir().expect("commit boundary directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("input.dpack");
+    let original = (0u8..=255).cycle().take(512 * 1024).collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write commit boundary input");
+
+    let token = CancellationToken::new();
+    let observer_token = token.clone();
+    let mut events = Vec::new();
+    let mut observer = |event: &ProgressEvent| {
+        events.push(*event);
+        if event.phase == ProgressPhase::Finalizing && event.state == ProgressState::Started {
+            observer_token.cancel();
+        }
+    };
+    let mut request = CompressRequest::new(&input, &archive);
+    request.format = CompressionFormat::V2(v2_options(64 * 1024));
+    let report = application::compress_with_control(
+        request,
+        OperationControl::new()
+            .with_progress(&mut observer)
+            .with_cancellation(token.clone()),
+    )
+    .expect("commit must win before terminal progress");
+
+    assert_eq!(report.archive_version, 2);
+    assert!(archive.is_file());
+    assert!(token.is_cancelled());
+    assert!(events
+        .last()
+        .is_some_and(|event| event.is_terminal_success()));
+}
+
+#[test]
+fn installed_control_that_never_cancels_is_observational_and_byte_exact() {
+    let directory = tempfile::tempdir().expect("cancellation overhead directory");
+    let input = directory.path().join("input.bin");
+    let baseline = directory.path().join("baseline.dpack");
+    let controlled = directory.path().join("controlled.dpack");
+    let original = (0u8..=255)
+        .cycle()
+        .take(4 * 1024 * 1024)
+        .collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write overhead input");
+
+    let mut baseline_request = CompressRequest::new(&input, &baseline);
+    baseline_request.format = CompressionFormat::V2(v2_options(256 * 1024));
+    let started = Instant::now();
+    application::compress(baseline_request).expect("baseline compression");
+    let baseline_elapsed = started.elapsed();
+
+    let mut controlled_request = CompressRequest::new(&input, &controlled);
+    controlled_request.format = CompressionFormat::V2(v2_options(256 * 1024));
+    let token = CancellationToken::new();
+    let started = Instant::now();
+    application::compress_with_control(
+        controlled_request,
+        OperationControl::new().with_cancellation(token.clone()),
+    )
+    .expect("never-cancelled compression");
+    let controlled_elapsed = started.elapsed();
+
+    assert!(!token.is_cancelled());
+    assert_eq!(
+        fs::read(&baseline).expect("read baseline archive"),
+        fs::read(&controlled).expect("read controlled archive")
+    );
+    eprintln!(
+        "OBSERVATIONAL cancellation overhead: disabled={baseline_elapsed:?} installed_not_cancelled={controlled_elapsed:?} chunks=16"
+    );
+}
+
+#[test]
+fn ordinary_failures_remain_distinct_from_typed_cancellation() {
+    let directory = tempfile::tempdir().expect("ordinary failure directory");
+    let missing = directory.path().join("missing.bin");
+    let output = directory.path().join("output.dpack");
+    let token = CancellationToken::new();
+
+    let result = application::compress_with_control(
+        CompressRequest::new(missing, output),
+        OperationControl::new().with_cancellation(token),
+    );
+
+    assert!(matches!(result, Err(OperationError::Failed(_))));
 }
 
 #[test]

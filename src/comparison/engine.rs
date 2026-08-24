@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 
 use crate::analysis;
+use crate::application::control::{CancellationToken, OperationResult};
 use crate::compression::{planned, zstd_backend};
 use crate::error::{DatapackError, Result};
 use crate::metadata::PayloadKind;
@@ -84,13 +85,19 @@ struct CompressionRun {
     structured_fallback: bool,
 }
 
-pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<ComparisonReportV1> {
+pub(crate) fn compare_path_with_control(
+    input: &Path,
+    options: CompareOptions,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<ComparisonReportV1> {
+    checkpoint(cancellation)?;
     validate_options(options)?;
     let source_metadata = std::fs::metadata(input)?;
     if !source_metadata.is_file() {
         return Err(DatapackError::InvalidFormat(
             "comparison input must be a regular file".to_string(),
-        ));
+        )
+        .into());
     }
     let source_size = source_metadata.len();
     let compared_size = compared_size(source_size, options)?;
@@ -102,9 +109,11 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
         workspace.measured_input(),
         compared_size,
         compared_size == source_size,
+        cancellation,
     )?;
-    let source_hash = sha256_path_exact(workspace.measured_input(), compared_size)?;
+    let source_hash = sha256_path_exact(workspace.measured_input(), compared_size, cancellation)?;
 
+    checkpoint(cancellation)?;
     let planning_started = Instant::now();
     let mut prepared = prepare_datapack(workspace.measured_input(), compared_size)?;
     let planning_elapsed = planning_started.elapsed();
@@ -134,6 +143,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
     let mut zstd_artifact_hash = None;
 
     for run in 0..options.runs {
+        checkpoint(cancellation)?;
         if run % 2 == 0 {
             let datapack = measure_datapack_compression(
                 workspace.measured_input(),
@@ -148,6 +158,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 &mut selected_mode,
                 &mut encoder_fell_back,
             )?;
+            checkpoint(cancellation)?;
             record_stable_size(
                 "standalone zstd",
                 measure_zstd_compression(
@@ -169,6 +180,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 &mut zstd_compression,
                 &mut zstd_size,
             )?;
+            checkpoint(cancellation)?;
             let datapack = measure_datapack_compression(
                 workspace.measured_input(),
                 workspace.datapack_archive(),
@@ -184,6 +196,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
             )?;
         }
 
+        checkpoint(cancellation)?;
         let current_datapack_size = std::fs::metadata(workspace.datapack_archive())?.len();
         let current_zstd_size = std::fs::metadata(workspace.zstd_archive())?.len();
         if run % 2 == 0 {
@@ -192,12 +205,14 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 workspace.datapack_archive(),
                 current_datapack_size,
                 &mut datapack_artifact_hash,
+                cancellation,
             )?;
             record_stable_artifact_hash(
                 "standalone zstd",
                 workspace.zstd_archive(),
                 current_zstd_size,
                 &mut zstd_artifact_hash,
+                cancellation,
             )?;
         } else {
             record_stable_artifact_hash(
@@ -205,12 +220,14 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 workspace.zstd_archive(),
                 current_zstd_size,
                 &mut zstd_artifact_hash,
+                cancellation,
             )?;
             record_stable_artifact_hash(
                 "DataPack",
                 workspace.datapack_archive(),
                 current_datapack_size,
                 &mut datapack_artifact_hash,
+                cancellation,
             )?;
         }
     }
@@ -237,6 +254,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
     let mut datapack_decompression = Vec::with_capacity(options.runs);
     let mut zstd_decompression = Vec::with_capacity(options.runs);
     for run in 0..options.runs {
+        checkpoint(cancellation)?;
         if run % 2 == 0 {
             zstd_decompression.push(measure_zstd_decompression(
                 workspace.zstd_archive(),
@@ -260,18 +278,21 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 compared_size,
             )?);
         }
+        checkpoint(cancellation)?;
         if run % 2 == 0 {
             validate_restored_identity(
                 "standalone zstd",
                 workspace.zstd_restore(),
                 compared_size,
                 &source_hash,
+                cancellation,
             )?;
             validate_restored_identity(
                 "DataPack",
                 workspace.datapack_restore(),
                 compared_size,
                 &source_hash,
+                cancellation,
             )?;
         } else {
             validate_restored_identity(
@@ -279,12 +300,14 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
                 workspace.datapack_restore(),
                 compared_size,
                 &source_hash,
+                cancellation,
             )?;
             validate_restored_identity(
                 "standalone zstd",
                 workspace.zstd_restore(),
                 compared_size,
                 &source_hash,
+                cancellation,
             )?;
         }
     }
@@ -295,6 +318,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
     let zstd_decompression_median = median_duration(&zstd_decompression);
     let validation_status = options.mode.validation_status();
 
+    checkpoint(cancellation)?;
     let report = ComparisonReportV1 {
         schema_version: SCHEMA_VERSION,
         report_type: "comparison",
@@ -354,6 +378,7 @@ pub(crate) fn compare_path(input: &Path, options: CompareOptions) -> Result<Comp
     };
 
     workspace.finish()?;
+    checkpoint(cancellation)?;
     Ok(report)
 }
 
@@ -535,9 +560,11 @@ fn record_stable_artifact_hash(
     path: &Path,
     artifact_size: u64,
     expected: &mut Option<[u8; 32]>,
-) -> Result<()> {
-    let actual = sha256_path_exact(path, artifact_size)?;
-    ensure_stable_value(&format!("{label} artifact identity"), expected, actual)
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<()> {
+    let actual = sha256_path_exact(path, artifact_size, cancellation)?;
+    ensure_stable_value(&format!("{label} artifact identity"), expected, actual)?;
+    Ok(())
 }
 
 fn validate_restored_identity(
@@ -545,14 +572,16 @@ fn validate_restored_identity(
     path: &Path,
     restored_size: u64,
     expected: &[u8; 32],
-) -> Result<()> {
-    let actual = sha256_path_exact(path, restored_size)?;
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<()> {
+    let actual = sha256_path_exact(path, restored_size, cancellation)?;
     if actual == *expected {
         Ok(())
     } else {
-        Err(DatapackError::InvalidFormat(format!(
-            "comparison {label} SHA256 validation failed"
-        )))
+        Err(
+            DatapackError::InvalidFormat(format!("comparison {label} SHA256 validation failed"))
+                .into(),
+        )
     }
 }
 
@@ -641,22 +670,39 @@ fn materialize_snapshot(
     output: &Path,
     expected_size: u64,
     require_eof: bool,
-) -> Result<()> {
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<()> {
     let mut reader = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(input)?);
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, File::create(output)?);
-    let copied = std::io::copy(&mut reader.by_ref().take(expected_size), &mut writer)?;
+    let mut copied = 0u64;
+    let mut buffer = vec![0u8; IO_BUFFER_BYTES];
+    while copied < expected_size {
+        checkpoint(cancellation)?;
+        let remaining = expected_size.saturating_sub(copied);
+        let requested = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let read = reader.read(&mut buffer[..requested])?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..read])?;
+        copied = copied.saturating_add(read as u64);
+    }
     writer.flush()?;
     if copied != expected_size {
         return Err(DatapackError::InvalidFormat(format!(
             "comparison snapshot copied {copied} bytes, expected {expected_size}; input changed while preparing the comparison"
-        )));
+        ))
+        .into());
     }
     if require_eof {
         let mut extra = [0u8; 1];
         if reader.read(&mut extra)? != 0 {
             return Err(DatapackError::InvalidFormat(
                 "comparison input grew while preparing the immutable snapshot".to_string(),
-            ));
+            )
+            .into());
         }
     }
     Ok(())
@@ -689,12 +735,17 @@ fn read_path_exact(path: &Path, expected_size: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn sha256_path_exact(path: &Path, expected_size: u64) -> Result<[u8; 32]> {
+fn sha256_path_exact(
+    path: &Path,
+    expected_size: u64,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<[u8; 32]> {
     let mut reader = BufReader::with_capacity(IO_BUFFER_BYTES, File::open(path)?);
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     let mut total = 0u64;
     loop {
+        checkpoint(cancellation)?;
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
@@ -709,16 +760,25 @@ fn sha256_path_exact(path: &Path, expected_size: u64) -> Result<[u8; 32]> {
         if total > expected_size {
             return Err(DatapackError::InvalidFormat(format!(
                 "comparison hash input exceeded expected size of {expected_size} bytes"
-            )));
+            ))
+            .into());
         }
         hasher.update(&buffer[..read]);
     }
     if total != expected_size {
         return Err(DatapackError::InvalidFormat(format!(
             "comparison hash read {total} bytes, expected {expected_size}"
-        )));
+        ))
+        .into());
     }
     Ok(hasher.finalize().into())
+}
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
 }
 
 const fn archive_mode_label(mode: ArchiveMode) -> &'static str {
@@ -782,7 +842,7 @@ mod tests {
         std::fs::write(&restored, b"wrong").expect("write mismatched restoration");
         let expected: [u8; 32] = Sha256::digest(b"right").into();
 
-        let error = validate_restored_identity("test", &restored, 5, &expected).unwrap_err();
+        let error = validate_restored_identity("test", &restored, 5, &expected, None).unwrap_err();
         assert!(error.to_string().contains("SHA256 validation failed"));
     }
 }

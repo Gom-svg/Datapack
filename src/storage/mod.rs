@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 
 use bincode::Options;
 
+use crate::application::control::{CancellationToken, OperationResult};
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::formats::csv::columnar;
@@ -186,6 +187,31 @@ pub fn write_raw_zstd_archive_stream<R: Read, W: Write>(
         return Err(DatapackError::InvalidFormat(format!(
             "streamed input size {input_bytes} does not match expected size {original_size}"
         )));
+    }
+    Ok(input_bytes)
+}
+
+pub(crate) fn write_raw_zstd_archive_stream_with_control<R: Read, W: Write>(
+    input_path: &std::path::Path,
+    original_size: u64,
+    reader: &mut R,
+    writer: &mut W,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<u64> {
+    let mut metadata = DpackMetadata::minimal(FileType::from_path(input_path), original_size);
+    metadata.payload_kind = PayloadKind::RawZstd;
+    writer.write_all(&encode_v1_header(&metadata)?)?;
+    let input_bytes = zstd_backend::compress_stream_with_control(
+        reader,
+        writer,
+        zstd_backend::DEFAULT_LEVEL,
+        cancellation,
+    )?;
+    if input_bytes != original_size {
+        return Err(DatapackError::InvalidFormat(format!(
+            "streamed input size {input_bytes} does not match expected size {original_size}"
+        ))
+        .into());
     }
     Ok(input_bytes)
 }
@@ -446,6 +472,29 @@ pub fn restore_raw_zstd_stream<R: Read, W: Write>(
         ));
     }
     zstd_backend::decompress_stream_exact(reader, writer, metadata.original_size)
+}
+
+pub(crate) fn restore_raw_zstd_stream_with_control<R: Read, W: Write>(
+    metadata: &DpackMetadata,
+    reader: &mut R,
+    writer: &mut W,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<u64> {
+    if !matches!(
+        metadata.payload_kind,
+        PayloadKind::RawZstd | PayloadKind::Plain | PayloadKind::Dictionary
+    ) {
+        return Err(DatapackError::InvalidFormat(
+            "streaming v1 restore only supports raw-byte payloads".to_string(),
+        )
+        .into());
+    }
+    zstd_backend::decompress_stream_exact_with_control(
+        reader,
+        writer,
+        metadata.original_size,
+        cancellation,
+    )
 }
 
 pub fn write_archive<W: Write>(

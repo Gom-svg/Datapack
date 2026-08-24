@@ -200,22 +200,6 @@ impl<'a> ProgressEmitter<'a> {
         self.emit(phase, ProgressState::Started, 0, total_bytes, 0, None);
     }
 
-    pub(crate) fn started_with_items(
-        &mut self,
-        phase: ProgressPhase,
-        total_bytes: Option<u64>,
-        total_items: Option<u64>,
-    ) {
-        self.emit(
-            phase,
-            ProgressState::Started,
-            0,
-            total_bytes,
-            0,
-            total_items,
-        );
-    }
-
     pub(crate) fn completed(
         &mut self,
         phase: ProgressPhase,
@@ -229,24 +213,6 @@ impl<'a> ProgressEmitter<'a> {
             total_bytes,
             0,
             None,
-        );
-    }
-
-    pub(crate) fn completed_with_items(
-        &mut self,
-        phase: ProgressPhase,
-        completed_bytes: u64,
-        total_bytes: Option<u64>,
-        completed_items: u64,
-        total_items: Option<u64>,
-    ) {
-        self.emit(
-            phase,
-            ProgressState::Completed,
-            completed_bytes,
-            total_bytes,
-            completed_items,
-            total_items,
         );
     }
 

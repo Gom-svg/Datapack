@@ -30,6 +30,7 @@ This report uses only these status labels:
 | Hosted P2 distribution CI | **CERTIFIED** | run `32698666658` at technical checkpoint `cc128bb687b1cfbe64c6b6c7b912f31862176588` |
 | Hosted P2 final checkpoint CI | **CERTIFIED** | run `32699440785` at checkpoint `a433dbad5761a169681bdab64273938b86b291eb`; all 18 required jobs passed |
 | Hosted P3 progress CI | **CERTIFIED** | run `32701817032` at technical checkpoint `6c40e70dc155930ff2f42931e4c650b5d6dddf49`; all 18 required jobs passed |
+| Hosted P3 documentation closure CI | **CERTIFIED** | run `32703591864` at checkpoint `138cdf1812191ad0e45d07f9feb009a1b29d6c6e`; all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -44,7 +45,7 @@ This report uses only these status labels:
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
-| P4 — Cooperative Cancellation | **DEFERRED** | No public cancellation capability exists. |
+| P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally. Hosted P4 certification is **NOT RUN**. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
@@ -397,9 +398,9 @@ disabled, and the Rust operation continues. It is not implicit cancellation.
 Rust observers remain synchronous and infallible by type. A panic follows
 normal Rust unwinding. A focused test proves an observer panic at a v2 advanced
 event does not publish the transactional output; a panic at a post-commit
-terminal event cannot undo an already successful commit. P4 cancellation
-remains **DEFERRED** and no cancellation token, async runtime, or task runtime
-was added.
+terminal event cannot undo an already successful commit. At the P3 checkpoint,
+P4 cancellation remained **DEFERRED** and no cancellation token, async runtime,
+or task runtime had been added; the later P4 outcome is recorded below.
 
 The detailed contract, operation granularity, CLI/Python adapters, callback
 semantics, future IPC compatibility, and P4 boundary are documented in
@@ -467,11 +468,142 @@ This hosted evidence confirms that the Product-Grade Progress API preserves
 Linux and Windows Rust execution, the Python SDK, the ABI3 packaging contract,
 both platform wheel executions, the declared CPython range, and the P2
 distribution guarantees. Progress remains observational and distinct from
-cancellation. P4 cooperative cancellation remains **DEFERRED**.
+cancellation. At this P3 closure checkpoint, P4 cooperative cancellation
+remained **DEFERRED**.
 
 No `.dpack` v1/v2 semantics, protected fixtures, planner decisions, codec
 behavior, Application operation results, Python identity, ABI floor, platform
 policy, dependency, CI workflow, or release/publication state changed in P3.
+
+## P4 cooperative cancellation outcome
+
+P4 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted P4 certification is
+**NOT RUN**. The starting checkpoint was
+`138cdf1812191ad0e45d07f9feb009a1b29d6c6e`, whose P3 documentation closure
+passed all 18 hosted jobs in run `32703591864`.
+
+The initial read-only audit found no public cancellation primitive. The v2
+compression pipeline had a private `Arc<AtomicBool>` used only to stop sibling
+reader/worker work after an internal pipeline failure; callers could neither
+request nor observe it. All six Application operations already had simple and
+`*_with_progress` functions. Compress and Decompress used sibling
+transactional `TempOutput` files, Drop cleanup, a final flush/commit boundary,
+backup-and-restore overwrite behavior, and an existing `keep_partial` policy.
+Analyze and Validate create no output; Compare owns a bounded temporary
+workspace; Benchmark owns its existing temporary artifacts. Python detached
+long Rust work and reattached only for progress callbacks, but exposed no
+cancellation type. Python `KeyboardInterrupt` behavior was not converted into
+operation control, and CLI Ctrl+C depended on process termination.
+
+The public `DatapackError` enum is exhaustively matchable, so adding a
+`Cancelled` variant would be a breaking source change. P4 instead evolves the
+Application API additively:
+
+- `CancellationToken` is a cloneable `Arc<AtomicBool>` handle with monotonic,
+  idempotent `cancel()` and `is_cancelled()` operations using Release/Acquire
+  ordering;
+- `OperationControl` independently carries an optional `ProgressObserver` and
+  optional cloned cancellation token;
+- each of Analyze, Compress, Decompress, Validate, Compare, and Benchmark adds
+  one `*_with_control` entry point while all simple and P3 progress-aware calls
+  remain unchanged; and
+- non-exhaustive `OperationError::{Cancelled, Failed(DatapackError)}` supplies a
+  typed cancellation outcome without modifying `DatapackError`.
+
+Cancellation is checked before meaningful work, around deterministic bounded
+I/O and progress delivery, between major in-memory stages, at v2 ordered chunk
+boundaries, within validation/hash loops, between comparison and Benchmark
+suboperations, and immediately before transactional commit. Ordinary errors
+that occur before cancellation is observed remain ordinary failures. A
+cancellation observed at a checkpoint wins at that checkpoint.
+
+For Compress and Decompress, cancellation before the final commit leaves no
+final output and preserves an existing destination. Default Drop cleanup
+removes the sibling partial. Existing `keep_partial=true` continues to retain
+only the explicitly named sibling `.partial` artifact; it is never promoted or
+reported as a complete output. The final pre-commit check defines the race:
+observed cancellation prevents commit, while a successful commit wins over a
+later request and cannot be retroactively deleted or reported as cancelled.
+Only the latter path emits terminal `Finalizing/Completed` progress.
+
+V2 compression preserves its reader/bounded-worker/ordered-writer topology,
+bounded channels, ordered archive bytes, and scoped thread joins. A request may
+allow already-running bounded work to finish during teardown, but queued or
+in-flight results are not committed after cancellation wins. V2 decompression
+and validation check every chunk. V1 raw zstd checks its natural 64 KiB stream
+loop; structured v1 and several legacy Benchmark transforms use truthful coarse
+stage boundaries. Analyze retains bounded sampling. Compare checks its 256 KiB
+snapshot reads, 64 KiB hashes, run boundaries, and cleanup. Benchmark stops the
+active controlled suboperation and does not start later planned measurements
+after cancellation is observed.
+
+Python now exports frozen `datapack.CancellationToken`, with `cancel()` and the
+read-only `is_cancelled` property, plus typed `datapack.CancelledError` under
+`DataPackError`. Analyze, Compress, Decompress, Validate, and Compare accept an
+optional keyword-only `cancellation=` argument. They still detach during Rust
+work; a second Python thread can invoke the shared native token without a
+Python polling worker. A progress callback can explicitly call `token.cancel()`.
+P3 callback exceptions remain reported through `sys.unraisablehook`, disable
+later callbacks, and allow the Rust operation to continue; callback return
+values and exceptions never become cancellation.
+
+Python `KeyboardInterrupt` conversion and CLI signal-to-token integration are
+**DEFERRED**. P4 adds no signal dependency, unsafe handler, Tokio/async runtime,
+task scheduler, or background service. The shared token is suitable for a
+future Desktop operation handle, but Desktop/Tauri remains **DEFERRED**.
+
+The exact contract, checkpoint granularity, transaction precedence, Python
+threading, frontend limitations, and future adapter boundary are documented in
+`docs/productization/CANCELLATION_API.md`.
+
+### P4 cancellation audit answers
+
+| Audit question | Finding |
+| --- | --- |
+| Existing primitive | No caller-facing primitive. V2's private atomic flag handled only internal pipeline failure teardown. |
+| Suitable operations | All six Application operations have useful cooperative boundaries; some v1/legacy Benchmark work remains coarse. |
+| Safe checkpoints | Before work; bounded reads/hashes; v2 ordered chunks; major v1 stages; validation/comparison/Benchmark boundaries; progress delivery; and immediately pre-commit. |
+| Commit points | `TempOutput::commit_with_cleanup_warning` publishes Compress/Decompress output; report return is the logical point for output-free operations. |
+| Temporary output | Sibling transactional `.partial` files for Compress/Decompress, comparison workspace files, and existing Benchmark temporary artifacts. |
+| Ordinary cleanup | `TempOutput` Drop removes owned partials unless `keep_partial`; comparison/Benchmark guards remove their owned paths. |
+| `keep_partial` | Already existed. P4 preserves it and never promotes retained cancellation output to the final path. |
+| Typed error compatibility | Modifying exhaustive `DatapackError` would be breaking; additive non-exhaustive `OperationError` avoids that break. |
+| Python interrupt state | Long work detached from Python; no prior token or proven portable `KeyboardInterrupt` conversion. |
+| CLI interrupt state | Ctrl+C was process termination only; no typed cooperative control or portable signal adapter. |
+| Approval/dependency decision | No stop condition arose. A standard-library atomic implementation was sufficient and no dependency was added. |
+
+### P4 performance observation
+
+One local uncontrolled debug-profile observation used the same deterministic
+4 MiB input, 256 KiB v2 chunks, one worker, and at most two chunks in flight.
+Compression without operation control took 208.897471 ms; compression with an
+installed but never-cancelled token took 209.407553 ms across 16 chunks. The
+archives were byte-for-byte identical. This WSL/NTFS-path measurement is
+**OBSERVATIONAL**, has no wall-clock CI threshold, and makes no universal
+latency or overhead claim.
+
+### P4 local certification
+
+| Gate | Status | Result |
+| --- | --- | --- |
+| `cargo fmt --all -- --check` | **CERTIFIED** | PASS |
+| `cargo check --locked` | **CERTIFIED** | PASS |
+| `cargo test --locked` | **CERTIFIED** | PASS — 375 tests, zero failures, including a deterministic mid-read validation-hash checkpoint |
+| Strict locked Clippy | **CERTIFIED** | PASS |
+| `cargo build --release --locked` | **CERTIFIED** | PASS |
+| Binding format/check/test/Clippy/release build | **CERTIFIED** | PASS — binding crate has zero Rust unit tests |
+| Python 3.9-target syntax, Ruff lint, and Ruff formatting | **CERTIFIED** | PASS |
+| Source SDK tests | **CERTIFIED** | PASS — 12 tests, zero failures, including deterministic callback and cross-thread cancellation |
+| Linux ABI3 wheel build and exact P2 certification | **CERTIFIED** | PASS — `cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64`, exact eight-member allowlist, 988,668 bytes, SHA-256 `d308c40d9cd947f9227ed3c4fe73eaa13a8c948307fe1bac81d3c2f68658349e` |
+| Isolated installed-wheel SDK | **CERTIFIED** | PASS — four tests, zero failures, including native typed transactional cancellation; Python 3.14.4; repository and build tools absent |
+| P1 identity/version consistency | **CERTIFIED** | PASS — `0.1.0` |
+| `cargo deny` core and binding | **CERTIFIED** | PASS with the existing non-failing unmatched-license and duplicate-`syn` warnings |
+| `cargo audit` 0.22.1 core and binding | **CERTIFIED** | PASS with only allowed `RUSTSEC-2025-0141` |
+| `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 163 files, 1.7 MiB, 422.7 KiB compressed, verification build passed |
+| Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
+| Progress and cancellation regression | **CERTIFIED** | PASS — no false terminal success on cancellation; never-cancelled controlled output remained byte-identical |
+| Windows and CPython 3.9–3.14 hosted P4 regression | **NOT RUN** | P4 hosted CI has not run. The unchanged P3 baseline passed all 18 jobs in runs `32701817032` and `32703591864`. |
+| `git diff --check` | **CERTIFIED** | PASS |
 
 ## Preserved external technical-beta evidence
 

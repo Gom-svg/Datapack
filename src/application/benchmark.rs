@@ -4,13 +4,12 @@ use crate::benchmark::{
 };
 use crate::error::{DatapackError, Result};
 
+use super::control::{uncontrolled, OperationContext, OperationControl, OperationResult};
 use super::model::{
     ArchiveModeV1, BenchmarkArtifactsV1, BenchmarkProfileV1, BenchmarkReportV1, BenchmarkRequest,
     BenchmarkScopeV1, BenchmarkValidationStatusV1, ChunkedBenchmarkReportV1, V2CompressionOptions,
 };
-use super::progress::{
-    OperationKind, ProgressEmitter, ProgressObserver, ProgressPhase, ProgressState,
-};
+use super::progress::{OperationKind, ProgressObserver, ProgressPhase, ProgressState};
 
 const MIB: u64 = 1024 * 1024;
 
@@ -22,57 +21,74 @@ pub(super) fn benchmark_with_progress(
     request: BenchmarkRequest,
     observer: &mut dyn ProgressObserver,
 ) -> Result<BenchmarkReportV1> {
-    let mut emitter = ProgressEmitter::observed(OperationKind::Benchmark, observer);
-    run(request, &mut emitter)
+    let mut context = OperationContext::observed(OperationKind::Benchmark, observer);
+    uncontrolled(run(request, &mut context))
 }
 
-fn run(request: BenchmarkRequest, emitter: &mut ProgressEmitter<'_>) -> Result<BenchmarkReportV1> {
+pub(super) fn benchmark_with_control(
+    request: BenchmarkRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<BenchmarkReportV1> {
+    let mut context = OperationContext::controlled(OperationKind::Benchmark, control);
+    run(request, &mut context)
+}
+
+fn run(
+    request: BenchmarkRequest,
+    context: &mut OperationContext<'_>,
+) -> OperationResult<BenchmarkReportV1> {
     let source_size = std::fs::metadata(&request.input)
         .ok()
         .map(|value| value.len());
-    emitter.started(ProgressPhase::Benchmarking, source_size);
+    context.started(ProgressPhase::Benchmarking, source_size)?;
     let internal = internal_request(request)?;
     let mut active_phases = Vec::<&'static str>::new();
-    let execution = benchmark::execute_with_events(internal, &mut |event| {
-        let BenchmarkEvent::Phase {
-            name,
-            state,
-            processed_bytes,
-            total_bytes,
-            ..
-        } = event
-        else {
-            return;
-        };
-        let phase = benchmark_phase(name);
-        if !active_phases.contains(&name) {
-            emitter.started(phase, total_bytes);
-            if state == BenchmarkEventState::Advanced {
-                active_phases.push(name);
+    let cancellation = context.cancellation().cloned();
+    let execution = benchmark::execute_with_events_and_control(
+        internal,
+        &mut |event| {
+            let BenchmarkEvent::Phase {
+                name,
+                state,
+                processed_bytes,
+                total_bytes,
+                ..
+            } = event
+            else {
+                return;
+            };
+            let phase = benchmark_phase(name);
+            if !active_phases.contains(&name) {
+                context.emit_unchecked(phase, ProgressState::Started, 0, total_bytes, 0, None);
+                if state == BenchmarkEventState::Advanced {
+                    active_phases.push(name);
+                }
             }
-        }
-        emitter.emit(
-            phase,
-            match state {
-                BenchmarkEventState::Advanced => ProgressState::Advanced,
-                BenchmarkEventState::Completed => ProgressState::Completed,
-            },
-            processed_bytes,
-            total_bytes,
-            0,
-            None,
-        );
-        if state == BenchmarkEventState::Completed {
-            active_phases.retain(|active| *active != name);
-        }
-    })?;
+            context.emit_unchecked(
+                phase,
+                match state {
+                    BenchmarkEventState::Advanced => ProgressState::Advanced,
+                    BenchmarkEventState::Completed => ProgressState::Completed,
+                },
+                processed_bytes,
+                total_bytes,
+                0,
+                None,
+            );
+            if state == BenchmarkEventState::Completed {
+                active_phases.retain(|active| *active != name);
+            }
+        },
+        cancellation.as_ref(),
+    )?;
+    context.checkpoint()?;
     let report = report(execution)?;
-    emitter.completed(
+    context.completed(
         ProgressPhase::Benchmarking,
         report.measured_input_size_bytes,
         Some(report.source_size_bytes),
-    );
-    emitter.succeeded();
+    )?;
+    context.succeeded();
     Ok(report)
 }
 

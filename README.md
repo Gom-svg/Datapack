@@ -230,20 +230,23 @@ the current public Application API. See
 Decompress, Validate, Compare, and legacy Benchmark services. Owned typed
 requests and versioned results carry operational facts; Clap parsing, terminal
 rendering, stdout, and stderr remain outside the service layer. Each operation
-also has a typed progress-observer entry point. Progress is observational, and
-the API exposes no cancellation token or bounded-latency cancellation claim.
-Advisor is not one of the six public services. See the
-[Rust Application API V1](docs/reference/APPLICATION_API_V1.md).
+also has a typed progress-observer entry point and an additive control-aware
+entry point accepting an explicit cooperative `CancellationToken`. Progress
+remains observational; cancellation is separate control with latency determined
+by natural safe checkpoints. Advisor is not one of the six public services.
+See the [Rust Application API V1](docs/reference/APPLICATION_API_V1.md).
 
 The Python SDK foundation is a thin PyO3 consumer of that Rust API, not a
 Python reimplementation of DataPack. It exposes synchronous path-based
 `analyze`, `compress`, `decompress`, `validate`, and `compare` functions and
 returns the Rust reports as Python dictionaries with typed exceptions. Each
 call accepts an optional structured `ProgressEvent` callback adapted directly
-from Rust facts. Benchmark, Advisor, and cancellation are not exposed in the
+from Rust facts and an optional explicit `CancellationToken`; cancellation
+raises typed `CancelledError`. Benchmark and Advisor are not exposed in the
 Python surface. It has no required pandas, Polars, or Spark dependency. See the
 [Python SDK foundation](docs/reference/PYTHON_SDK_FOUNDATION.md),
-[Progress API](docs/productization/PROGRESS_API.md), and
+[Progress API](docs/productization/PROGRESS_API.md),
+[Cancellation API](docs/productization/CANCELLATION_API.md), and
 [Python build instructions](python/README.md).
 
 ## Experimental Hardware Tuning

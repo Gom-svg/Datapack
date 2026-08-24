@@ -1,5 +1,6 @@
 use std::io::{Cursor, Read, Write};
 
+use crate::application::control::{CancellationToken, OperationResult};
 use crate::error::{DatapackError, Result};
 
 pub const DEFAULT_LEVEL: i32 = 3;
@@ -113,6 +114,40 @@ pub fn compress_stream<R: Read, W: Write>(
     Ok(input_bytes)
 }
 
+pub(crate) fn compress_stream_with_control<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    level: i32,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<u64> {
+    checkpoint(cancellation)?;
+    let mut encoder = zstd::stream::write::Encoder::new(writer, level)?;
+    let mut buffer = [0u8; DECOMPRESSION_BUFFER_BYTES];
+    let mut input_bytes = 0u64;
+    loop {
+        checkpoint(cancellation)?;
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        encoder.write_all(&buffer[..read])?;
+        input_bytes = input_bytes
+            .checked_add(u64::try_from(read).map_err(|_| {
+                DatapackError::InvalidFormat(
+                    "compressed read size exceeds u64 capacity".to_string(),
+                )
+            })?)
+            .ok_or_else(|| {
+                DatapackError::InvalidFormat(
+                    "compressed input size exceeds u64 capacity".to_string(),
+                )
+            })?;
+    }
+    checkpoint(cancellation)?;
+    encoder.finish()?;
+    Ok(input_bytes)
+}
+
 pub fn decompress_stream<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<u64> {
     let mut decoder = zstd::stream::read::Decoder::new(reader)?;
     Ok(std::io::copy(&mut decoder, writer)?)
@@ -159,6 +194,56 @@ pub fn decompress_stream_exact<R: Read, W: Write>(
     }
 
     Ok(restored_size)
+}
+
+pub(crate) fn decompress_stream_exact_with_control<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    expected_size: u64,
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<u64> {
+    checkpoint(cancellation)?;
+    let mut decoder = zstd::stream::read::Decoder::new(reader)?;
+    let mut buffer = [0u8; DECOMPRESSION_BUFFER_BYTES];
+    let mut restored_size = 0u64;
+
+    loop {
+        checkpoint(cancellation)?;
+        let read = decoder.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let read_u64 = u64::try_from(read).map_err(|_| {
+            DatapackError::InvalidFormat("decompressed read size exceeds u64 capacity".to_string())
+        })?;
+        let next_size = restored_size.checked_add(read_u64).ok_or_else(|| {
+            DatapackError::InvalidFormat("decompressed size exceeds u64 capacity".to_string())
+        })?;
+        if next_size > expected_size {
+            return Err(DatapackError::InvalidFormat(format!(
+                "decompressed output exceeds expected size of {expected_size} bytes"
+            ))
+            .into());
+        }
+        writer.write_all(&buffer[..read])?;
+        restored_size = next_size;
+    }
+
+    if restored_size != expected_size {
+        return Err(DatapackError::InvalidFormat(format!(
+            "decompressed size mismatch: expected {expected_size}, got {restored_size}"
+        ))
+        .into());
+    }
+
+    Ok(restored_size)
+}
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]

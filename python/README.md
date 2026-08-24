@@ -136,7 +136,10 @@ has no Rust, Cargo, or maturin on `PATH`.
 Long-running Rust application calls detach from the Python interpreter, so
 other Python threads are not needlessly held while DataPack works. A progress
 callback safely reattaches for that synchronous callback and then detaches
-again. Result translation reattaches only after the Rust operation completes.
+again. An optional `datapack.CancellationToken` shares the Rust atomic
+cancellation state, so another Python thread or an explicit progress callback
+can call `cancel()`. Cancellation raises `datapack.CancelledError`. Result
+translation reattaches only after the Rust operation completes.
 
 ## Current scope and limitations
 
@@ -145,8 +148,9 @@ readiness or a public release.
 
 - There is no pandas, Polars, Spark, or other dataframe dependency.
 - There is no Python reimplementation of DataPack algorithms.
-- Cancellation is deliberately not exposed because the codecs do not yet
-  provide bounded-latency cooperative cancellation.
+- Cooperative cancellation is explicit and checked at natural safe boundaries;
+  it is not instantaneous. Python `KeyboardInterrupt` conversion remains
+  deferred, and progress callback return values/exceptions do not cancel work.
 - The legacy Benchmark workflow is not exposed in the Python surface. Analyze,
   Validate, Compare, and several v1 transforms expose truthful coarse progress
   rather than fabricated intermediate percentages.

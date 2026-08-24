@@ -6,6 +6,7 @@
 
 mod benchmark;
 mod compress;
+pub(crate) mod control;
 mod decompress;
 mod io;
 mod model;
@@ -29,6 +30,7 @@ pub use crate::comparison::{
     ComparisonLimitationV1, ComparisonMethodologyV1, ComparisonReportV1, ComparisonScopeV1,
     ComparisonWinnersV1, CompetitorReportV1, CompetitorValidationV1, TimingReportV1,
 };
+pub use control::{CancellationToken, OperationControl, OperationError, OperationResult};
 pub(crate) use model::CompressionNotice;
 pub use model::{
     AnalyzeRequest, ArchiveModeV1, BenchmarkArtifactsV1, BenchmarkProfileV1, BenchmarkReportV1,
@@ -56,11 +58,25 @@ pub fn benchmark_with_progress(
     benchmark::benchmark_with_progress(request, observer)
 }
 
+pub fn benchmark_with_control(
+    request: BenchmarkRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<BenchmarkReportV1> {
+    benchmark::benchmark_with_control(request, control)
+}
+
 pub fn analyze_with_progress(
     request: AnalyzeRequest,
     observer: &mut dyn ProgressObserver,
 ) -> crate::error::Result<AnalysisReportV1> {
     read_ops::analyze_with_progress(request, observer)
+}
+
+pub fn analyze_with_control(
+    request: AnalyzeRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<AnalysisReportV1> {
+    read_ops::analyze_with_control(request, control)
 }
 
 pub(crate) use read_ops::analyze_for_cli_with_progress;
@@ -76,6 +92,13 @@ pub fn validate_with_progress(
     read_ops::validate_with_progress(request, observer)
 }
 
+pub fn validate_with_control(
+    request: ValidateRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<ValidationReportV1> {
+    read_ops::validate_with_control(request, control)
+}
+
 pub fn compare(request: CompareRequest) -> crate::error::Result<ComparisonReportV1> {
     read_ops::compare(request)
 }
@@ -85,6 +108,13 @@ pub fn compare_with_progress(
     observer: &mut dyn ProgressObserver,
 ) -> crate::error::Result<ComparisonReportV1> {
     read_ops::compare_with_progress(request, observer)
+}
+
+pub fn compare_with_control(
+    request: CompareRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<ComparisonReportV1> {
+    read_ops::compare_with_control(request, control)
 }
 
 pub fn compress(request: CompressRequest) -> crate::error::Result<CompressionResultV1> {
@@ -98,6 +128,13 @@ pub fn compress_with_progress(
     compress::compress_with_progress(request, observer)
 }
 
+pub fn compress_with_control(
+    request: CompressRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<CompressionResultV1> {
+    compress::compress_with_control(request, control)
+}
+
 pub fn decompress(request: DecompressRequest) -> crate::error::Result<DecompressionResultV1> {
     decompress::decompress(request)
 }
@@ -107,4 +144,11 @@ pub fn decompress_with_progress(
     observer: &mut dyn ProgressObserver,
 ) -> crate::error::Result<DecompressionResultV1> {
     decompress::decompress_with_progress(request, observer)
+}
+
+pub fn decompress_with_control(
+    request: DecompressRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<DecompressionResultV1> {
+    decompress::decompress_with_control(request, control)
 }

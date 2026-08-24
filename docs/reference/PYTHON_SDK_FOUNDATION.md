@@ -142,6 +142,7 @@ typed subclasses of `DataPackError`:
 - `DataPackOutputError`
 - `DataPackOperationError`
 - `DataPackTranslationError`
+- `CancelledError`
 
 An invalid archive normally makes `validate()` return a report whose `valid`
 field is false. Operational failures, such as an unreadable path, raise an
@@ -175,10 +176,12 @@ configured synchronous progress callback and to construct returned Python
 objects. This permits other Python threads to make progress while Rust performs
 file I/O or CPU work between callbacks.
 
-Detaching from the interpreter is not cancellation. Cooperative cancellation
-is **deferred by design** because current codec operations do not promise
-bounded-latency interruption. The foundation exposes neither a cancellation
-token nor a misleading best-effort substitute.
+Detaching from the interpreter is not cancellation. P4 separately exposes
+`datapack.CancellationToken`, whose shared Rust atomic state can be requested
+from another Python thread while long Rust work remains detached. The five
+public operations accept keyword-only `cancellation=` and raise the typed
+`datapack.CancelledError` when a safe checkpoint accepts the request.
+Cancellation is cooperative and does not promise instantaneous interruption.
 
 P3 exposes optional keyword-only callbacks receiving immutable
 `datapack.ProgressEvent` objects. The Rust Application layer supplies the
@@ -187,6 +190,9 @@ terminal-success fact. Python does not recalculate progress. A callback
 exception is reported through `sys.unraisablehook`, disables later callbacks
 for that operation, and does not cancel the Rust work. Python callbacks during
 Compare can add caller wall time; Compare therefore keeps coarse progress.
+An observer may explicitly call `token.cancel()`; neither its return value nor
+an exception requests cancellation. Portable `KeyboardInterrupt` conversion is
+deferred and is not claimed by this foundation.
 
 ## Build and certification
 
@@ -224,7 +230,7 @@ This foundation does not implement:
 - compression or parsing logic in Python
 - pandas, Polars, Spark, or dataframe integration
 - async operations
-- cancellation
+- automatic `KeyboardInterrupt`/Ctrl+C conversion
 - Benchmark or Advisor bindings
 - public wheel publication
 - Desktop, GPU, cloud, SaaS, or telemetry functionality

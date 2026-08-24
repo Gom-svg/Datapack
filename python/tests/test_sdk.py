@@ -1,5 +1,6 @@
 import sys
 import tempfile
+import threading
 import unittest
 from importlib.metadata import version
 from pathlib import Path
@@ -159,6 +160,7 @@ class DataPackSdkTests(unittest.TestCase):
         sys.unraisablehook = unraisable.append
 
         calls = 0
+        token = datapack.CancellationToken()
 
         def failing_callback(_event):
             nonlocal calls
@@ -166,7 +168,11 @@ class DataPackSdkTests(unittest.TestCase):
             raise RuntimeError("progress callback sentinel")
 
         try:
-            report = datapack.analyze(self.source, progress=failing_callback)
+            report = datapack.analyze(
+                self.source,
+                progress=failing_callback,
+                cancellation=token,
+            )
         finally:
             sys.unraisablehook = previous_hook
 
@@ -175,6 +181,106 @@ class DataPackSdkTests(unittest.TestCase):
         self.assertEqual(len(unraisable), 1)
         self.assertIsInstance(unraisable[0].exc_value, RuntimeError)
         self.assertIn("progress callback sentinel", str(unraisable[0].exc_value))
+        self.assertFalse(token.is_cancelled)
+
+    def test_cancellation_token_is_monotonic_shared_control(self) -> None:
+        token = datapack.CancellationToken()
+        self.assertFalse(token.is_cancelled)
+        token.cancel()
+        token.cancel()
+        self.assertTrue(token.is_cancelled)
+        with self.assertRaises(AttributeError):
+            token.is_cancelled = False
+
+    def test_pre_cancelled_operation_raises_typed_exception_without_output(
+        self,
+    ) -> None:
+        token = datapack.CancellationToken()
+        token.cancel()
+        archive = self.directory / "pre-cancelled.dpack"
+
+        with self.assertRaises(datapack.CancelledError) as raised:
+            datapack.compress(self.source, archive, cancellation=token)
+
+        self.assertIsInstance(raised.exception, datapack.DataPackError)
+        self.assertFalse(archive.exists())
+
+    def test_progress_callback_can_explicitly_cancel_v2(self) -> None:
+        source = self.directory / "callback-cancel.bin"
+        source.write_bytes(bytes(range(256)) * 8_192)
+        archive = self.directory / "callback-cancel.dpack"
+        token = datapack.CancellationToken()
+        events = []
+
+        def cancel_after_chunk(event):
+            events.append(event)
+            if event.stage == "compressing" and event.completed_items >= 1:
+                token.cancel()
+
+        with self.assertRaises(datapack.CancelledError):
+            datapack.compress(
+                source,
+                archive,
+                options=datapack.V2CompressionOptions(
+                    chunk_size_bytes=64 * 1024,
+                    threads=1,
+                    max_in_flight_chunks=2,
+                ),
+                progress=cancel_after_chunk,
+                cancellation=token,
+            )
+
+        self.assertTrue(token.is_cancelled)
+        self.assertTrue(events)
+        self.assertFalse(any(event.terminal for event in events))
+        self.assertFalse(archive.exists())
+
+    def test_another_python_thread_can_cancel_detached_rust_work(self) -> None:
+        source = self.directory / "thread-cancel.bin"
+        source.write_bytes(bytes(range(256)) * 8_192)
+        archive = self.directory / "thread-source.dpack"
+        datapack.compress(
+            source,
+            archive,
+            options=datapack.V2CompressionOptions(
+                chunk_size_bytes=64 * 1024,
+                threads=1,
+                max_in_flight_chunks=2,
+            ),
+        )
+        restored = self.directory / "thread-restored.bin"
+        token = datapack.CancellationToken()
+        checkpoint_reached = threading.Event()
+        cancellation_requested = threading.Event()
+
+        def cancel_from_thread():
+            if checkpoint_reached.wait(timeout=5):
+                token.cancel()
+                cancellation_requested.set()
+
+        canceller = threading.Thread(target=cancel_from_thread)
+        canceller.start()
+
+        def coordinate(event):
+            if event.stage == "decompressing" and event.completed_items >= 1:
+                checkpoint_reached.set()
+                self.assertTrue(cancellation_requested.wait(timeout=5))
+
+        try:
+            with self.assertRaises(datapack.CancelledError):
+                datapack.decompress(
+                    archive,
+                    restored,
+                    progress=coordinate,
+                    cancellation=token,
+                )
+        finally:
+            checkpoint_reached.set()
+            canceller.join(timeout=5)
+
+        self.assertFalse(canceller.is_alive())
+        self.assertTrue(token.is_cancelled)
+        self.assertFalse(restored.exists())
 
     def test_progress_must_be_callable(self) -> None:
         with self.assertRaises(datapack.DataPackConfigurationError):

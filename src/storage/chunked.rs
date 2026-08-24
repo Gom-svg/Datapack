@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
+use crate::application::control::{uncontrolled, CancellationToken, OperationResult};
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::storage::output::TempOutput;
@@ -25,6 +26,13 @@ pub const MAX_CHUNK_SIZE_MB: u64 = 4_096;
 
 const RAW_ZSTD_MODE: u8 = 1;
 const IO_BUFFER_BYTES: usize = 256 * 1024;
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkedBackend {
@@ -384,6 +392,23 @@ pub(crate) fn encode_raw_zstd_chunked_file_with_progress(
     options: ChunkedCompressOptions,
     progress: &mut dyn FnMut(ChunkedProgress),
 ) -> Result<(ChunkedStats, Option<String>)> {
+    uncontrolled(encode_raw_zstd_chunked_file_with_control(
+        input_path,
+        output_path,
+        options,
+        None,
+        progress,
+    ))
+}
+
+pub(crate) fn encode_raw_zstd_chunked_file_with_control(
+    input_path: &Path,
+    output_path: &Path,
+    options: ChunkedCompressOptions,
+    cancellation: Option<&CancellationToken>,
+    progress: &mut dyn FnMut(ChunkedProgress),
+) -> OperationResult<(ChunkedStats, Option<String>)> {
+    checkpoint(cancellation)?;
     ensure_distinct_paths(
         input_path,
         output_path,
@@ -404,6 +429,7 @@ pub(crate) fn encode_raw_zstd_chunked_file_with_progress(
 
     let mut chunks = expected_chunk_entries(original_size, chunk_size, chunk_count_usize)?;
     let input_file = File::open(input_path)?;
+    checkpoint(cancellation)?;
     let (mut temp_guard, temp_file) = TempOutput::create(output_path, options.keep_temp)?;
     let mut output = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
     let table_started = Instant::now();
@@ -420,9 +446,11 @@ pub(crate) fn encode_raw_zstd_chunked_file_with_progress(
         chunk_count,
         options,
         Arc::clone(&counters),
+        cancellation,
         progress,
     )?;
 
+    checkpoint(cancellation)?;
     output.flush()?;
     output.seek(SeekFrom::Start(0))?;
     let table_started = Instant::now();
@@ -437,6 +465,7 @@ pub(crate) fn encode_raw_zstd_chunked_file_with_progress(
     table_write_duration += table_started.elapsed();
     let archive_size = output.get_ref().metadata()?.len();
     drop(output);
+    checkpoint(cancellation)?;
     let cleanup_warning = temp_guard.commit_with_cleanup_warning(output_path, options.force)?;
 
     let mut zstd_level_distribution: Vec<_> = accumulator.zstd_levels.into_iter().collect();
@@ -507,8 +536,10 @@ fn run_compression_pipeline<W: Write + Seek>(
     chunk_count: u64,
     options: ChunkedCompressOptions,
     counters: Arc<PipelineCounters>,
+    cancellation: Option<&CancellationToken>,
     progress: &mut dyn FnMut(ChunkedProgress),
-) -> Result<(ReaderSummary, CompressionAccumulator)> {
+) -> OperationResult<(ReaderSummary, CompressionAccumulator)> {
+    checkpoint(cancellation)?;
     std::thread::scope(|scope| {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (permit_sender, permit_receiver) =
@@ -582,6 +613,7 @@ fn run_compression_pipeline<W: Write + Seek>(
             &result_receiver,
             &permit_sender,
             &counters,
+            cancellation,
             progress,
         );
 
@@ -595,14 +627,15 @@ fn run_compression_pipeline<W: Write + Seek>(
             worker_panicked |= handle.join().is_err();
         }
         if reader_panicked {
-            return Err(DatapackError::InvalidFormat(
-                "chunk reader thread panicked".to_string(),
-            ));
+            return Err(
+                DatapackError::InvalidFormat("chunk reader thread panicked".to_string()).into(),
+            );
         }
         if worker_panicked {
             return Err(DatapackError::InvalidFormat(
                 "chunk compression worker panicked".to_string(),
-            ));
+            )
+            .into());
         }
         pipeline_result
     })
@@ -754,8 +787,9 @@ fn write_compressed_chunks<W: Write + Seek>(
     result_receiver: &mpsc::Receiver<PipelineMessage>,
     permit_sender: &mpsc::SyncSender<()>,
     counters: &PipelineCounters,
+    cancellation: Option<&CancellationToken>,
     progress: &mut dyn FnMut(ChunkedProgress),
-) -> Result<(ReaderSummary, CompressionAccumulator)> {
+) -> OperationResult<(ReaderSummary, CompressionAccumulator)> {
     let mut reorder_buffer = BTreeMap::new();
     let mut next_chunk_id = 0u64;
     let table_bytes = chunk_count
@@ -773,25 +807,30 @@ fn write_compressed_chunks<W: Write + Seek>(
     let mut accumulator = CompressionAccumulator::default();
 
     while next_chunk_id < chunk_count || reader_summary.is_none() {
+        checkpoint(cancellation)?;
         match result_receiver.recv() {
             Ok(PipelineMessage::Reader(Ok(summary))) => reader_summary = Some(summary),
-            Ok(PipelineMessage::Reader(Err(error))) => return Err(error),
-            Ok(PipelineMessage::Chunk(Err(error))) => return Err(error),
+            Ok(PipelineMessage::Reader(Err(error))) => return Err(error.into()),
+            Ok(PipelineMessage::Chunk(Err(error))) => return Err(error.into()),
             Ok(PipelineMessage::Chunk(Ok(chunk))) => {
+                checkpoint(cancellation)?;
                 if chunk.chunk_id >= chunk_count {
                     return Err(DatapackError::InvalidFormat(format!(
                         "worker returned out-of-range chunk {}",
                         chunk.chunk_id
-                    )));
+                    ))
+                    .into());
                 }
                 let chunk_id = chunk.chunk_id;
                 if reorder_buffer.insert(chunk_id, chunk).is_some() {
                     return Err(DatapackError::InvalidFormat(format!(
                         "worker returned duplicate chunk {chunk_id}"
-                    )));
+                    ))
+                    .into());
                 }
 
                 while let Some(chunk) = reorder_buffer.remove(&next_chunk_id) {
+                    checkpoint(cancellation)?;
                     let compressed_offset = next_compressed_offset;
                     let write_started = Instant::now();
                     output.write_all(&chunk.compressed)?;
@@ -856,6 +895,7 @@ fn write_compressed_chunks<W: Write + Seek>(
                         options.max_in_flight_chunks,
                         chunk.zstd_level,
                     ));
+                    checkpoint(cancellation)?;
                     next_chunk_id = next_chunk_id.checked_add(1).ok_or_else(|| {
                         DatapackError::InvalidFormat("chunk id overflow during write".to_string())
                     })?;
@@ -864,7 +904,8 @@ fn write_compressed_chunks<W: Write + Seek>(
             Err(_) => {
                 return Err(DatapackError::InvalidFormat(
                     "chunk compression pipeline stopped before completion".to_string(),
-                ))
+                )
+                .into())
             }
         }
     }
@@ -892,6 +933,23 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
     options: ChunkedDecompressOptions,
     progress: &mut dyn FnMut(ChunkedProgress),
 ) -> Result<(ChunkedStats, Option<String>)> {
+    uncontrolled(decode_raw_zstd_chunked_file_with_control(
+        input_path,
+        output_path,
+        options,
+        None,
+        progress,
+    ))
+}
+
+pub(crate) fn decode_raw_zstd_chunked_file_with_control(
+    input_path: &Path,
+    output_path: &Path,
+    options: ChunkedDecompressOptions,
+    cancellation: Option<&CancellationToken>,
+    progress: &mut dyn FnMut(ChunkedProgress),
+) -> OperationResult<(ChunkedStats, Option<String>)> {
+    checkpoint(cancellation)?;
     ensure_distinct_paths(
         input_path,
         output_path,
@@ -911,6 +969,7 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
         DatapackError::InvalidFormat(format!("archive '{}': {error}", input_path.display()))
     })?;
     let archive_size = input.get_ref().metadata()?.len();
+    checkpoint(cancellation)?;
     let (mut temp_guard, temp_file) = TempOutput::create(output_path, options.keep_temp)?;
     let mut output = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
     let mut global_hasher = Sha256::new();
@@ -922,11 +981,13 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
     let mut chunk_durations = Vec::with_capacity(archive_info.chunks.len());
 
     for chunk in &archive_info.chunks {
+        checkpoint(cancellation)?;
         if chunk.compression_mode != RAW_ZSTD_MODE {
             return Err(DatapackError::InvalidFormat(format!(
                 "unsupported v2 chunk compression mode {}",
                 chunk.compression_mode
-            )));
+            ))
+            .into());
         }
         input.seek(SeekFrom::Start(chunk.compressed_offset))?;
         let compressed_size = usize::try_from(chunk.compressed_size).map_err(|_| {
@@ -949,7 +1010,8 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
                 return Err(DatapackError::InvalidFormat(format!(
                     "compressed payload for chunk {} is truncated",
                     chunk.chunk_id
-                )));
+                ))
+                .into());
             }
             return Err(error.into());
         }
@@ -985,7 +1047,8 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
                 chunk.chunk_id,
                 chunk.original_size,
                 restored.len()
-            )));
+            ))
+            .into());
         }
         if options.verify {
             let verify_started = Instant::now();
@@ -996,7 +1059,8 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
                     chunk.chunk_id,
                     hex_digest(&chunk.chunk_sha256),
                     hex_digest(&chunk_hash)
-                )));
+                ))
+                .into());
             }
             // Updating in validated chunk order makes the global hash cover
             // the complete original input byte sequence without separators.
@@ -1017,13 +1081,15 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
             bytes_written: restored_size,
             total_bytes: archive_info.original_size_bytes,
         });
+        checkpoint(cancellation)?;
     }
 
     if restored_size != archive_info.original_size_bytes {
         return Err(DatapackError::InvalidFormat(format!(
             "restored size {restored_size} does not match original size {}",
             archive_info.original_size_bytes
-        )));
+        ))
+        .into());
     }
     if options.verify {
         let verify_started = Instant::now();
@@ -1034,13 +1100,16 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
                 "global SHA-256 mismatch: expected {}, got {}",
                 hex_digest(&archive_info.global_sha256),
                 hex_digest(&global_hash)
-            )));
+            ))
+            .into());
         }
     }
+    checkpoint(cancellation)?;
     let write_started = Instant::now();
     output.flush()?;
     write_duration += write_started.elapsed();
     drop(output);
+    checkpoint(cancellation)?;
     let cleanup_warning = temp_guard.commit_with_cleanup_warning(output_path, options.force)?;
 
     let chunk_total = chunk_durations.len() as f64;
@@ -1096,14 +1165,32 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_progress(
 // Windows PathBuf layout makes this crate-private typed error exactly 128 bytes.
 // Preserve its validation stage/source contract without an additional allocation.
 #[cfg_attr(windows, allow(clippy::result_large_err))]
-pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
+pub(crate) enum ControlledV2ValidationError {
+    Cancelled,
+    Failed(V2ValidationError),
+}
+
+impl From<V2ValidationError> for ControlledV2ValidationError {
+    fn from(error: V2ValidationError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+pub(crate) fn validate_raw_zstd_chunked_payload_with_control<R: Read + Seek>(
     input: &mut R,
     archive_info: &ChunkedArchiveInfo,
-) -> std::result::Result<(), V2ValidationError> {
+    cancellation: Option<&CancellationToken>,
+) -> std::result::Result<(), ControlledV2ValidationError> {
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        return Err(ControlledV2ValidationError::Cancelled);
+    }
     let mut global_hasher = Sha256::new();
     let mut restored_size = 0u64;
 
     for chunk in &archive_info.chunks {
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(ControlledV2ValidationError::Cancelled);
+        }
         if chunk.compression_mode != RAW_ZSTD_MODE {
             return Err(V2ValidationError::new(
                 V2ValidationStage::ChunkPayload,
@@ -1111,7 +1198,8 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                     "unsupported v2 chunk compression mode {}",
                     chunk.compression_mode
                 )),
-            ));
+            )
+            .into());
         }
 
         input
@@ -1147,12 +1235,12 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                         "compressed payload for chunk {} is truncated",
                         chunk.chunk_id
                     )),
-                ));
+                )
+                .into());
             }
-            return Err(V2ValidationError::new(
-                V2ValidationStage::ChunkPayload,
-                error.into(),
-            ));
+            return Err(
+                V2ValidationError::new(V2ValidationStage::ChunkPayload, error.into()).into(),
+            );
         }
 
         let restored_limit = usize::try_from(chunk.original_size).map_err(|_| {
@@ -1200,7 +1288,8 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                     chunk.original_size,
                     restored.len()
                 )),
-            ));
+            )
+            .into());
         }
 
         let chunk_hash: [u8; 32] = Sha256::digest(&restored).into();
@@ -1213,7 +1302,8 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                     hex_digest(&chunk.chunk_sha256),
                     hex_digest(&chunk_hash)
                 )),
-            ));
+            )
+            .into());
         }
         global_hasher.update(&restored);
         restored_size = restored_size.checked_add(restored_len).ok_or_else(|| {
@@ -1224,6 +1314,9 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                 ),
             )
         })?;
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(ControlledV2ValidationError::Cancelled);
+        }
     }
 
     if restored_size != archive_info.original_size_bytes {
@@ -1233,7 +1326,8 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                 "restored size {restored_size} does not match original size {}",
                 archive_info.original_size_bytes
             )),
-        ));
+        )
+        .into());
     }
     let global_hash: [u8; 32] = global_hasher.finalize().into();
     if global_hash != archive_info.global_sha256 {
@@ -1244,7 +1338,8 @@ pub(crate) fn validate_raw_zstd_chunked_payload<R: Read + Seek>(
                 hex_digest(&archive_info.global_sha256),
                 hex_digest(&global_hash)
             )),
-        ));
+        )
+        .into());
     }
 
     Ok(())

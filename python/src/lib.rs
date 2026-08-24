@@ -3,9 +3,10 @@
 use std::path::PathBuf;
 
 use datapack::application::{
-    self, AnalyzeRequest, CompareMode, CompareRequest, CompressRequest, CompressionBackend,
-    CompressionFormat, CompressionMode, DecompressRequest, ProgressEvent, ProgressObserver,
-    V1CompressionOptions, V2CompressionOptions, ValidateRequest,
+    self, AnalyzeRequest, CancellationToken as RustCancellationToken, CompareMode, CompareRequest,
+    CompressRequest, CompressionBackend, CompressionFormat, CompressionMode, DecompressRequest,
+    OperationControl, OperationError, ProgressEvent, ProgressObserver, V1CompressionOptions,
+    V2CompressionOptions, ValidateRequest,
 };
 use datapack::error::DatapackError as RustDataPackError;
 use pyo3::create_exception;
@@ -62,6 +63,37 @@ create_exception!(
     DataPackError,
     "A Rust application report could not be translated to Python."
 );
+create_exception!(
+    datapack,
+    CancelledError,
+    DataPackError,
+    "A DataPack operation was cooperatively cancelled."
+);
+
+/// Python handle for the shared Rust cancellation state.
+#[pyclass(name = "CancellationToken", module = "datapack", frozen)]
+struct PyCancellationToken {
+    inner: RustCancellationToken,
+}
+
+#[pymethods]
+impl PyCancellationToken {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: RustCancellationToken::new(),
+        }
+    }
+
+    fn cancel(&self) {
+        self.inner.cancel();
+    }
+
+    #[getter]
+    fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
+    }
+}
 
 /// Immutable Python adaptation of the Rust application progress facts.
 #[pyclass(name = "ProgressEvent", module = "datapack", frozen)]
@@ -262,26 +294,30 @@ impl PyV2CompressionOptions {
 }
 
 #[pyfunction]
-#[pyo3(signature = (input, *, sample_mb = 64, progress = None))]
+#[pyo3(signature = (input, *, sample_mb = 64, progress = None, cancellation = None))]
 fn analyze(
     py: Python<'_>,
     input: PathBuf,
     sample_mb: u64,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<Py<PyCancellationToken>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = AnalyzeRequest::new(input);
     request.sample_mb = sample_mb;
-    let progress_request = request.clone();
-    service_report_with_optional_progress(
+    let controlled_request = request.clone();
+    let cancellation = rust_cancellation(py, cancellation);
+    service_report_with_optional_control(
         py,
         "analyze",
         progress,
+        cancellation,
         move || application::analyze(request),
-        move |observer| application::analyze_with_progress(progress_request, observer),
+        move |control| application::analyze_with_control(controlled_request, control),
     )
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     input,
     output,
@@ -289,7 +325,8 @@ fn analyze(
     options = None,
     overwrite = false,
     keep_partial = false,
-    progress = None
+    progress = None,
+    cancellation = None
 ))]
 fn compress(
     py: Python<'_>,
@@ -299,23 +336,26 @@ fn compress(
     overwrite: bool,
     keep_partial: bool,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<Py<PyCancellationToken>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = CompressRequest::new(input, output);
     request.format = compression_format(options)?;
     request.overwrite = overwrite;
     request.keep_partial = keep_partial;
-    let progress_request = request.clone();
-    service_report_with_optional_progress(
+    let controlled_request = request.clone();
+    let cancellation = rust_cancellation(py, cancellation);
+    service_report_with_optional_control(
         py,
         "compress",
         progress,
+        cancellation,
         move || application::compress(request),
-        move |observer| application::compress_with_progress(progress_request, observer),
+        move |control| application::compress_with_control(controlled_request, control),
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     archive,
     output,
@@ -326,7 +366,8 @@ fn compress(
     max_memory_bytes = None,
     overwrite = false,
     keep_partial = false,
-    progress = None
+    progress = None,
+    cancellation = None
 ))]
 fn decompress(
     py: Python<'_>,
@@ -339,6 +380,7 @@ fn decompress(
     overwrite: bool,
     keep_partial: bool,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<Py<PyCancellationToken>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = DecompressRequest::new(archive, output);
     request.verify = verify;
@@ -347,17 +389,20 @@ fn decompress(
     request.max_memory_bytes = max_memory_bytes;
     request.overwrite = overwrite;
     request.keep_partial = keep_partial;
-    let progress_request = request.clone();
-    service_report_with_optional_progress(
+    let controlled_request = request.clone();
+    let cancellation = rust_cancellation(py, cancellation);
+    service_report_with_optional_control(
         py,
         "decompress",
         progress,
+        cancellation,
         move || application::decompress(request),
-        move |observer| application::decompress_with_progress(progress_request, observer),
+        move |control| application::decompress_with_control(controlled_request, control),
     )
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     archive,
     *,
@@ -365,7 +410,8 @@ fn decompress(
     max_output_bytes = None,
     max_chunks = None,
     max_memory_bytes = None,
-    progress = None
+    progress = None,
+    cancellation = None
 ))]
 fn validate(
     py: Python<'_>,
@@ -375,6 +421,7 @@ fn validate(
     max_chunks: Option<u64>,
     max_memory_bytes: Option<u64>,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<Py<PyCancellationToken>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = ValidateRequest::new(archive);
     request.against = against;
@@ -383,13 +430,15 @@ fn validate(
     if let Some(value) = max_memory_bytes {
         request.max_memory_bytes = value;
     }
-    let progress_request = request.clone();
-    service_report_with_optional_progress(
+    let controlled_request = request.clone();
+    let cancellation = rust_cancellation(py, cancellation);
+    service_report_with_optional_control(
         py,
         "validate",
         progress,
+        cancellation,
         move || application::validate(request),
-        move |observer| application::validate_with_progress(progress_request, observer),
+        move |control| application::validate_with_control(controlled_request, control),
     )
 }
 
@@ -400,7 +449,8 @@ fn validate(
     mode = "quick",
     runs = 3,
     max_input_mb = None,
-    progress = None
+    progress = None,
+    cancellation = None
 ))]
 fn compare(
     py: Python<'_>,
@@ -409,18 +459,21 @@ fn compare(
     runs: usize,
     max_input_mb: Option<u64>,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<Py<PyCancellationToken>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = CompareRequest::new(input);
     request.mode = parse_compare_mode(mode)?;
     request.runs = runs;
     request.max_input_mb = max_input_mb;
-    let progress_request = request.clone();
-    service_report_with_optional_progress(
+    let controlled_request = request.clone();
+    let cancellation = rust_cancellation(py, cancellation);
+    service_report_with_optional_control(
         py,
         "compare",
         progress,
+        cancellation,
         move || application::compare(request),
-        move |observer| application::compare_with_progress(progress_request, observer),
+        move |control| application::compare_with_control(controlled_request, control),
     )
 }
 
@@ -455,31 +508,42 @@ where
     json_report(py, &serialized, operation)
 }
 
-fn service_report_with_optional_progress<T, F, P>(
+fn service_report_with_optional_control<T, F, P>(
     py: Python<'_>,
     operation: &'static str,
     progress: Option<Py<PyAny>>,
+    cancellation: Option<RustCancellationToken>,
     service: F,
-    service_with_progress: P,
+    service_with_control: P,
 ) -> PyResult<Py<PyAny>>
 where
     T: Serialize,
     F: FnOnce() -> datapack::error::Result<T> + Send + 'static,
-    P: FnOnce(&mut dyn ProgressObserver) -> datapack::error::Result<T> + Send + 'static,
+    P: FnOnce(OperationControl<'_>) -> application::OperationResult<T> + Send + 'static,
 {
-    let Some(callback) = progress else {
+    if progress.is_none() && cancellation.is_none() {
         return service_report(py, operation, service);
-    };
-    if !callback.bind(py).is_callable() {
+    }
+    if progress
+        .as_ref()
+        .is_some_and(|callback| !callback.bind(py).is_callable())
+    {
         return Err(DataPackConfigurationError::new_err(format!(
             "{operation} request rejected: progress must be callable"
         )));
     }
 
     let serialized = py.detach(move || {
-        let mut observer = PythonProgressObserver::new(callback);
-        let report = service_with_progress(&mut observer)
-            .map_err(|error| service_failure(operation, error))?;
+        let mut observer = progress.map(PythonProgressObserver::new);
+        let mut control = OperationControl::new();
+        if let Some(cancellation) = cancellation {
+            control = control.with_cancellation(cancellation);
+        }
+        if let Some(observer) = observer.as_mut() {
+            control = control.with_progress(observer);
+        }
+        let report = service_with_control(control)
+            .map_err(|error| controlled_service_failure(operation, error))?;
         serde_json::to_string(&report).map_err(|error| ServiceFailure {
             kind: PythonErrorKind::Translation,
             message: format!("{operation} result translation failed: {error}"),
@@ -505,6 +569,7 @@ fn json_report(py: Python<'_>, serialized: &str, operation: &'static str) -> PyR
 
 #[derive(Clone, Copy)]
 enum PythonErrorKind {
+    Cancelled,
     Io,
     Format,
     Configuration,
@@ -522,6 +587,7 @@ struct ServiceFailure {
 impl ServiceFailure {
     fn into_pyerr(self) -> PyErr {
         match self.kind {
+            PythonErrorKind::Cancelled => CancelledError::new_err(self.message),
             PythonErrorKind::Io => DataPackIOError::new_err(self.message),
             PythonErrorKind::Format => DataPackFormatError::new_err(self.message),
             PythonErrorKind::Configuration => DataPackConfigurationError::new_err(self.message),
@@ -531,6 +597,27 @@ impl ServiceFailure {
             PythonErrorKind::Translation => DataPackTranslationError::new_err(self.message),
         }
     }
+}
+
+fn controlled_service_failure(operation: &'static str, error: OperationError) -> ServiceFailure {
+    match error {
+        OperationError::Cancelled => ServiceFailure {
+            kind: PythonErrorKind::Cancelled,
+            message: format!("{operation} cancelled"),
+        },
+        OperationError::Failed(error) => service_failure(operation, error),
+        other => ServiceFailure {
+            kind: PythonErrorKind::Operation,
+            message: format!("{operation} failed: {other}"),
+        },
+    }
+}
+
+fn rust_cancellation(
+    py: Python<'_>,
+    cancellation: Option<Py<PyCancellationToken>>,
+) -> Option<RustCancellationToken> {
+    cancellation.map(|token| token.borrow(py).inner.clone())
 }
 
 fn service_failure(operation: &'static str, error: RustDataPackError) -> ServiceFailure {
@@ -606,6 +693,8 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         "DataPackTranslationError",
         py.get_type::<DataPackTranslationError>(),
     )?;
+    module.add("CancelledError", py.get_type::<CancelledError>())?;
+    module.add_class::<PyCancellationToken>()?;
     module.add_class::<PyV1CompressionOptions>()?;
     module.add_class::<PyV2CompressionOptions>()?;
     module.add_class::<PyProgressEvent>()?;

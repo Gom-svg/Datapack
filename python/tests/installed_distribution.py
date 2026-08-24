@@ -134,6 +134,37 @@ class InstalledDistributionTests(unittest.TestCase):
         self.assertTrue(decompression["verified"])
         self.assertEqual(restored.read_bytes(), self.original)
 
+    def test_installed_native_cancellation_is_typed_and_transactional(self) -> None:
+        source = self.directory / "cancel-source.bin"
+        source.write_bytes(bytes(range(256)) * 4_096)
+        archive = self.directory / "cancelled.dpack"
+        token = datapack.CancellationToken()
+        events = []
+
+        def cancel_after_chunk(event):
+            events.append(event)
+            if event.stage == "compressing" and event.completed_items >= 1:
+                token.cancel()
+
+        with self.assertRaises(datapack.CancelledError):
+            datapack.compress(
+                source,
+                archive,
+                options=datapack.V2CompressionOptions(
+                    chunk_size_bytes=64 * 1024,
+                    threads=1,
+                    max_in_flight_chunks=2,
+                ),
+                progress=cancel_after_chunk,
+                cancellation=token,
+            )
+
+        self.assertIsInstance(datapack.CancelledError(), datapack.DataPackError)
+        self.assertTrue(token.is_cancelled)
+        self.assertTrue(events)
+        self.assertFalse(any(event.terminal for event in events))
+        self.assertFalse(archive.exists())
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()

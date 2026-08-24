@@ -9,15 +9,16 @@ use crate::error::{DatapackError, Result};
 use crate::planning::{self, ArchiveMode, ColumnExecutionPlan};
 use crate::storage;
 
+use super::control::{
+    uncontrolled, OperationContext, OperationControl, OperationError, OperationResult,
+};
 use super::io::{self, ObservedReader, ObservedWriter, IO_BUFFER_BYTES};
 use super::model::{
     ArchiveModeV1, CodecBackendV1, CompressRequest, CompressionBackend, CompressionFormat,
     CompressionMode, CompressionNotice, CompressionResultV1, OperationDiagnosticV1,
     OperationProfileV1, V1CompressionOptions, V2CompressionOptions,
 };
-use super::progress::{
-    OperationKind, ProgressEmitter, ProgressObserver, ProgressPhase, ProgressState,
-};
+use super::progress::{OperationKind, ProgressObserver, ProgressPhase, ProgressState};
 use super::validation::{
     operation_failed, validate_input_output_paths, validate_output_overwrite_policy,
 };
@@ -28,22 +29,31 @@ const STRUCTURED_ENCODER_FALLBACK_CODE: &str = "STRUCTURED_ENCODER_FALLBACK";
 const OUTPUT_BACKUP_CLEANUP_FAILED_CODE: &str = "OUTPUT_BACKUP_CLEANUP_FAILED";
 
 pub(super) fn compress(request: CompressRequest) -> Result<CompressionResultV1> {
-    let mut emitter = ProgressEmitter::silent(OperationKind::Compress);
-    compress_entry(request, &mut emitter)
+    let mut context = OperationContext::silent(OperationKind::Compress);
+    uncontrolled(compress_entry(request, &mut context))
 }
 
 pub(super) fn compress_with_progress(
     request: CompressRequest,
     observer: &mut dyn ProgressObserver,
 ) -> Result<CompressionResultV1> {
-    let mut emitter = ProgressEmitter::observed(OperationKind::Compress, observer);
-    compress_entry(request, &mut emitter)
+    let mut context = OperationContext::observed(OperationKind::Compress, observer);
+    uncontrolled(compress_entry(request, &mut context))
+}
+
+pub(super) fn compress_with_control(
+    request: CompressRequest,
+    control: OperationControl<'_>,
+) -> OperationResult<CompressionResultV1> {
+    let mut context = OperationContext::controlled(OperationKind::Compress, control);
+    compress_entry(request, &mut context)
 }
 
 fn compress_entry(
     request: CompressRequest,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<CompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<CompressionResultV1> {
+    context.checkpoint()?;
     validate_input_output_paths(&request.input, &request.output)?;
     validate_output_overwrite_policy(&request.output, request.overwrite)?;
     let chunked_options = match &request.format {
@@ -57,15 +67,23 @@ fn compress_entry(
     let output_existed = request.output.exists();
     let input = request.input.clone();
     let output = request.output.clone();
-    compress_inner(request, chunked_options, emitter)
-        .map_err(|error| operation_failed("compression", &input, &output, output_existed, error))
+    compress_inner(request, chunked_options, context).map_err(|error| match error {
+        OperationError::Cancelled => OperationError::Cancelled,
+        OperationError::Failed(error) => OperationError::Failed(operation_failed(
+            "compression",
+            &input,
+            &output,
+            output_existed,
+            error,
+        )),
+    })
 }
 
 fn compress_inner(
     request: CompressRequest,
     chunked_options: Option<storage::chunked::ChunkedCompressOptions>,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<CompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<CompressionResultV1> {
     let total_started = Instant::now();
     let CompressRequest {
         input,
@@ -82,7 +100,7 @@ fn compress_inner(
             keep_partial,
             options,
             total_started,
-            emitter,
+            context,
         )?,
         CompressionFormat::V2(options) => compress_v2(
             &input,
@@ -94,10 +112,10 @@ fn compress_inner(
             })?,
             compression_backend(options.backend),
             total_started,
-            emitter,
+            context,
         )?,
     };
-    emitter.succeeded();
+    context.succeeded();
     Ok(result)
 }
 
@@ -107,8 +125,8 @@ fn compress_v2(
     options: storage::chunked::ChunkedCompressOptions,
     backend: CodecBackendV1,
     total_started: Instant,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<CompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<CompressionResultV1> {
     let input_size = std::fs::metadata(input)?.len();
     let chunk_size = u64::try_from(options.chunk_size_bytes).map_err(|_| {
         DatapackError::InvalidFormat("chunk_size_bytes exceeds u64 capacity".to_string())
@@ -118,16 +136,18 @@ fn compress_v2(
     } else {
         input_size.div_ceil(chunk_size)
     };
-    emitter.started_with_items(
+    context.started_with_items(
         ProgressPhase::Compressing,
         Some(input_size),
         Some(total_chunks),
-    );
+    )?;
     let transform_started = Instant::now();
-    let (stats, cleanup_warning) = storage::chunked::encode_raw_zstd_chunked_file_with_progress(
+    let cancellation = context.cancellation().cloned();
+    let (stats, cleanup_warning) = storage::chunked::encode_raw_zstd_chunked_file_with_control(
         input,
         output,
         options,
+        cancellation.as_ref(),
         &mut |event| {
             if let storage::chunked::ChunkedProgress::Compression {
                 chunks_written,
@@ -137,7 +157,7 @@ fn compress_v2(
                 ..
             } = event
             {
-                emitter.emit(
+                context.emit_unchecked(
                     ProgressPhase::Compressing,
                     ProgressState::Advanced,
                     bytes_written,
@@ -149,8 +169,9 @@ fn compress_v2(
         },
     )?;
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed_with_items(
+    context.emit_unchecked(
         ProgressPhase::Compressing,
+        ProgressState::Completed,
         input_size,
         Some(input_size),
         stats.chunk_count,
@@ -191,17 +212,17 @@ fn compress_v1(
     keep_partial: bool,
     options: V1CompressionOptions,
     total_started: Instant,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<CompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<CompressionResultV1> {
     let mut diagnostics = Vec::new();
     let mut cli_notices = Vec::new();
     let planning_started = Instant::now();
-    emitter.started(ProgressPhase::Planning, None);
+    context.started(ProgressPhase::Planning, None)?;
     let analysis = match analysis::analyze_cli_path(input, options.sample_mb) {
         Ok(analysis) => analysis,
         Err(DatapackError::InvalidCsv(reason)) => {
             let planning_ms = elapsed_ms(planning_started);
-            emitter.completed(ProgressPhase::Planning, 0, None);
+            context.completed(ProgressPhase::Planning, 0, None)?;
             cli_notices.push(CompressionNotice::StructuredAnalysisUnavailable { reason });
             diagnostics.push(diagnostic(
                 analysis::STRUCTURED_ANALYSIS_UNAVAILABLE_CODE,
@@ -217,14 +238,14 @@ fn compress_v1(
                 planning_ms,
                 diagnostics,
                 cli_notices,
-                emitter,
+                context,
             );
         }
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
     let delimiter = analysis.structured_delimiter();
     let planning_ms = elapsed_ms(planning_started);
-    emitter.completed(
+    context.completed(
         ProgressPhase::Planning,
         analysis.facts.coverage.bytes_analyzed,
         Some(
@@ -234,7 +255,7 @@ fn compress_v1(
                 .scope_size_bytes
                 .min(analysis.facts.coverage.max_bytes),
         ),
-    );
+    )?;
 
     if analysis.requires_raw_fallback() {
         let limitation_codes = analysis
@@ -263,7 +284,7 @@ fn compress_v1(
             planning_ms,
             diagnostics,
             cli_notices,
-            emitter,
+            context,
         );
     }
 
@@ -301,7 +322,7 @@ fn compress_v1(
             planning_ms,
             diagnostics,
             cli_notices,
-            emitter,
+            context,
         );
     }
 
@@ -311,10 +332,10 @@ fn compress_v1(
         options.max_dictionary_mb,
     );
     let read_started = Instant::now();
-    let bytes = io::read_all(input, ProgressPhase::ReadingInput, emitter)?;
+    let bytes = io::read_all(input, ProgressPhase::ReadingInput, context)?;
     let read_ms = elapsed_ms(read_started);
 
-    emitter.started(ProgressPhase::Compressing, Some(bytes.len() as u64));
+    context.started(ProgressPhase::Compressing, Some(bytes.len() as u64))?;
     let transform_started = Instant::now();
     let (archive, selected_mode, columnar_error) = if options.verify_best {
         let (archive, selected, saved, error) =
@@ -337,11 +358,11 @@ fn compress_v1(
         encode_for_plan_detailed(input, &bytes, plan.archive_mode, delimiter, &execution_plan)?
     };
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed(
+    context.completed(
         ProgressPhase::Compressing,
         bytes.len() as u64,
         Some(bytes.len() as u64),
-    );
+    )?;
     if let Some(error) = columnar_error {
         diagnostics.push(diagnostic(STRUCTURED_ENCODER_FALLBACK_CODE, error, None));
     }
@@ -353,12 +374,14 @@ fn compress_v1(
         writer,
         ProgressPhase::WritingArchive,
         Some(archive.len() as u64),
-        emitter,
+        context,
     );
     writer.write_all(&archive)?;
     writer.flush()?;
     writer.finish();
+    writer.checkpoint()?;
     drop(writer);
+    context.checkpoint()?;
     if let Some(warning) = temp_output.commit_with_cleanup_warning(output, overwrite)? {
         diagnostics.push(diagnostic(OUTPUT_BACKUP_CLEANUP_FAILED_CODE, warning, None));
     }
@@ -399,26 +422,36 @@ fn compress_raw_zstd_streaming(
     planning_ms: u64,
     mut diagnostics: Vec<OperationDiagnosticV1>,
     cli_notices: Vec<CompressionNotice>,
-    emitter: &mut ProgressEmitter<'_>,
-) -> Result<CompressionResultV1> {
+    context: &mut OperationContext<'_>,
+) -> OperationResult<CompressionResultV1> {
+    context.checkpoint()?;
     let input_size = std::fs::metadata(input)?.len();
+    let cancellation = context.cancellation().cloned();
     let file = File::open(input)?;
     let reader = BufReader::with_capacity(IO_BUFFER_BYTES, file);
     let mut reader = ObservedReader::new(
         reader,
         ProgressPhase::Compressing,
         Some(input_size),
-        emitter,
+        context,
     );
     let (mut temp_output, temp_file) = storage::output::TempOutput::create(output, keep_partial)?;
     let mut writer = BufWriter::with_capacity(IO_BUFFER_BYTES, temp_file);
     let transform_started = Instant::now();
-    storage::write_raw_zstd_archive_stream(input, input_size, &mut reader, &mut writer)?;
+    storage::write_raw_zstd_archive_stream_with_control(
+        input,
+        input_size,
+        &mut reader,
+        &mut writer,
+        cancellation.as_ref(),
+    )?;
     writer.flush()?;
     let archive_size = writer.get_ref().metadata()?.len();
     drop(writer);
     reader.finish();
+    reader.checkpoint()?;
     drop(reader);
+    context.checkpoint()?;
     if let Some(warning) = temp_output.commit_with_cleanup_warning(output, overwrite)? {
         diagnostics.push(diagnostic(OUTPUT_BACKUP_CLEANUP_FAILED_CODE, warning, None));
     }

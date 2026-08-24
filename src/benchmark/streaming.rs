@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 
 use crate::analysis::DatasetAnalysis;
+use crate::application::control::{CancellationToken, OperationResult};
 use crate::compression::zstd_backend;
 use crate::error::{DatapackError, Result};
 use crate::planning::ArchiveMode;
@@ -33,10 +34,13 @@ pub(super) fn execute(
     total_started: Instant,
     mut profile_timings: ProfileTimings,
     events: &mut dyn FnMut(BenchmarkEvent),
-) -> Result<BenchmarkExecution> {
+    cancellation: Option<&CancellationToken>,
+) -> OperationResult<BenchmarkExecution> {
+    checkpoint(cancellation)?;
     events(BenchmarkEvent::Notice(
         BenchmarkNotice::StreamingRawZstdExecution,
     ));
+    checkpoint(cancellation)?;
     let input = &options.input;
     let hash_enabled = !options.no_hash && !options.no_roundtrip;
     let temp_paths = BenchmarkTempPaths::new(input);
@@ -51,6 +55,7 @@ pub(super) fn execute(
     let original_hash = if hash_enabled {
         let started = Instant::now();
         let hash = sha256_path_prefix(input, benchmark_input_size, "benchmark hash input", events)?;
+        checkpoint(cancellation)?;
         profile_timings.hash_ms = Some(elapsed_ms(started));
         Some(hash)
     } else {
@@ -68,6 +73,7 @@ pub(super) fn execute(
             "benchmark zstd-only",
             events,
         )?;
+        checkpoint(cancellation)?;
         let duration = started.elapsed();
         profile_timings.zstd_only_ms = Some(duration_ms(duration));
         zstd_only_duration = Some(duration);
@@ -76,10 +82,12 @@ pub(super) fn execute(
     let mut compression_times = Vec::with_capacity(runs_used);
     let mut datapack_size = 0u64;
     for run_index in 0..runs_used {
+        checkpoint(cancellation)?;
         events(BenchmarkEvent::Notice(BenchmarkNotice::CompressRun {
             run: run_index + 1,
             total_runs: runs_used,
         }));
+        checkpoint(cancellation)?;
         let started = Instant::now();
         datapack_size = write_raw_zstd_prefix(
             input,
@@ -88,16 +96,19 @@ pub(super) fn execute(
             "benchmark raw-zstd compress",
             events,
         )?;
+        checkpoint(cancellation)?;
         compression_times.push(started.elapsed());
     }
 
     let mut decompression_times = Vec::with_capacity(runs_used);
     if !options.no_roundtrip {
         for run_index in 0..runs_used {
+            checkpoint(cancellation)?;
             events(BenchmarkEvent::Notice(BenchmarkNotice::DecompressRun {
                 run: run_index + 1,
                 total_runs: runs_used,
             }));
+            checkpoint(cancellation)?;
             let started = Instant::now();
             restore_v1_raw_path(
                 &temp_path,
@@ -105,6 +116,7 @@ pub(super) fn execute(
                 "benchmark raw-zstd decompress",
                 events,
             )?;
+            checkpoint(cancellation)?;
             decompression_times.push(started.elapsed());
         }
     } else {
@@ -119,6 +131,7 @@ pub(super) fn execute(
             "benchmark hash restored",
             events,
         )?;
+        checkpoint(cancellation)?;
         profile_timings.hash_ms = Some(
             profile_timings
                 .hash_ms
@@ -166,17 +179,21 @@ pub(super) fn execute(
         let mut chunked_roundtrip_sha256_match = None;
 
         for run_index in 0..runs_used {
+            checkpoint(cancellation)?;
             events(BenchmarkEvent::Notice(
                 BenchmarkNotice::ChunkedCompressRun {
                     run: run_index + 1,
                     total_runs: runs_used,
                 },
             ));
+            checkpoint(cancellation)?;
             let started = Instant::now();
-            let stats = storage::chunked::encode_raw_zstd_chunked_file(
+            let (stats, _) = storage::chunked::encode_raw_zstd_chunked_file_with_control(
                 chunked_input,
                 &chunked_temp_path,
                 chunk_options,
+                cancellation,
+                &mut |_| {},
             )?;
             chunked_compression_times.push(started.elapsed());
             chunked_archive_size = stats.archive_size_bytes;
@@ -184,14 +201,16 @@ pub(super) fn execute(
 
         if !options.no_roundtrip {
             for run_index in 0..runs_used {
+                checkpoint(cancellation)?;
                 events(BenchmarkEvent::Notice(
                     BenchmarkNotice::ChunkedDecompressRun {
                         run: run_index + 1,
                         total_runs: runs_used,
                     },
                 ));
+                checkpoint(cancellation)?;
                 let started = Instant::now();
-                storage::chunked::decode_raw_zstd_chunked_file(
+                storage::chunked::decode_raw_zstd_chunked_file_with_control(
                     &chunked_temp_path,
                     &chunked_restore_path,
                     storage::chunked::ChunkedDecompressOptions {
@@ -200,6 +219,8 @@ pub(super) fn execute(
                         keep_temp: options.keep_temp,
                         ..storage::chunked::ChunkedDecompressOptions::default()
                     },
+                    cancellation,
+                    &mut |_| {},
                 )?;
                 chunked_decompression_times.push(started.elapsed());
             }
@@ -306,12 +327,20 @@ pub(super) fn execute(
     } else {
         BenchmarkArtifacts::default()
     };
+    checkpoint(cancellation)?;
     Ok(BenchmarkExecution::Measured {
         metrics: Box::new(metrics),
         profile_timings,
         mode_label: "RawZstd".to_string(),
         artifacts,
     })
+}
+
+fn checkpoint(cancellation: Option<&CancellationToken>) -> OperationResult<()> {
+    match cancellation {
+        Some(cancellation) => cancellation.checkpoint(),
+        None => Ok(()),
+    }
 }
 
 fn write_raw_zstd_prefix(
