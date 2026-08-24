@@ -1,7 +1,8 @@
 # DataPack progress API
 
-Status: **IMPLEMENTED** in P3; local certification is recorded in the main
-Productization report. Cooperative cancellation remains **DEFERRED** to P4.
+Status: **IMPLEMENTED** and **CERTIFIED** locally and in hosted CI in P3;
+evidence is recorded in the main Productization report. Cooperative
+cancellation remains **DEFERRED** to P4.
 
 ## Architecture
 

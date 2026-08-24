@@ -29,6 +29,7 @@ This report uses only these status labels:
 | Hosted P1 CI | **CERTIFIED** | run `32694107348` |
 | Hosted P2 distribution CI | **CERTIFIED** | run `32698666658` at technical checkpoint `cc128bb687b1cfbe64c6b6c7b912f31862176588` |
 | Hosted P2 final checkpoint CI | **CERTIFIED** | run `32699440785` at checkpoint `a433dbad5761a169681bdab64273938b86b291eb`; all 18 required jobs passed |
+| Hosted P3 progress CI | **CERTIFIED** | run `32701817032` at technical checkpoint `6c40e70dc155930ff2f42931e4c650b5d6dddf49`; all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -42,7 +43,7 @@ This report uses only these status labels:
 | P0 — Productization Readiness Audit | **CERTIFIED** | `docs/productization/PRODUCTIZATION-READINESS-AUDIT.md` records the read-only baseline audit. Full local Rust certification and protected-fixture verification passed before the logical checkpoint commit. |
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
-| P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are locally certified. Hosted P3 evidence is **NOT RUN**. |
+| P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
 | P4 — Cooperative Cancellation | **DEFERRED** | No public cancellation capability exists. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
@@ -355,7 +356,7 @@ unmodified.
 
 ## P3 progress API outcome
 
-P3 is **CERTIFIED** locally. It preserves the existing public
+P3 is **IMPLEMENTED** and **CERTIFIED** locally and in hosted CI. It preserves the existing public
 `OperationKind`, `ProgressPhase`, `ProgressState`, `ProgressEvent`,
 `ProgressObserver`, and six silent/`*_with_progress` Application function pairs.
 The audit found a sound shared Rust foundation: Application I/O supplied
@@ -446,8 +447,27 @@ CI threshold, and does not claim that callbacks improve performance.
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS |
 | Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
 | Progress-disabled/enabled archive equality | **CERTIFIED** | PASS — byte-for-byte identical v2 artifacts |
-| Windows and CPython 3.9–3.14 hosted P3 regression | **NOT RUN** | Requires the post-P3 hosted workflow; P2 final run `32699440785` remains the last hosted certification. |
+| Windows and CPython 3.9–3.14 hosted P3 regression | **CERTIFIED** | PASS — all 18 required jobs passed in run `32701817032`, including isolated Linux and Windows execution on CPython 3.9 through 3.14. |
 | `git diff --check` | **CERTIFIED** | PASS |
+
+### P3 hosted certification closure
+
+Run `32701817032` — result **SUCCESS**, evidence status **CERTIFIED**, at P3
+technical checkpoint `6c40e70dc155930ff2f42931e4c650b5d6dddf49`.
+All 18 required hosted jobs passed:
+
+- Rust 1.85 on Ubuntu and Windows;
+- the Python SDK foundation and dependency/package policy;
+- Linux GNU x86_64 and Windows MSVC x86_64 ABI3 wheel builds, with identity,
+  tag, metadata, content inspection, and CI artifact upload; and
+- isolated execution of each platform's wheel on CPython 3.9, 3.10, 3.11,
+  3.12, 3.13, and 3.14.
+
+This hosted evidence confirms that the Product-Grade Progress API preserves
+Linux and Windows Rust execution, the Python SDK, the ABI3 packaging contract,
+both platform wheel executions, the declared CPython range, and the P2
+distribution guarantees. Progress remains observational and distinct from
+cancellation. P4 cooperative cancellation remains **DEFERRED**.
 
 No `.dpack` v1/v2 semantics, protected fixtures, planner decisions, codec
 behavior, Application operation results, Python identity, ABI floor, platform
