@@ -14,16 +14,20 @@ the selected archive path, integrity evidence, and measured scope explicit.
 
 ## Distribution Status
 
-DataPack has not made a public product release. There is currently no supported
-PyPI, crates.io, or downloadable binary installation. The authorized future PyPI
-distribution name is `datapack-engine`, while the Python import remains
-`datapack`. Public PyPI publication is not authorized yet; do not install the
-unrelated `datapack` project from PyPI expecting this engine.
+DataPack has not made a public product release. There is currently no PyPI,
+crates.io, GitHub Release, or public downloadable installation. P2 implements a
+wheel-first binary distribution named `datapack-engine`, while the Python
+import remains `datapack`. Matching Linux GNU x86_64 and Windows MSVC x86_64
+ABI3 wheels are built and install-tested as temporary CI artifacts; they are
+not public releases. Public PyPI publication is not authorized yet. Do not
+install the unrelated `datapack` project from PyPI expecting this engine.
 
 The Rust package remains internally named `datapack` with crates.io publication
 disabled for the Productization Foundation program. See the
 [versioning and release policy](docs/productization/VERSIONING_AND_RELEASE_POLICY.md)
 and [release artifact policy](docs/productization/RELEASE_ARTIFACTS.md).
+The implemented Python wheel contract and its current evidence are documented
+in the [Python distribution guide](docs/productization/PYTHON_DISTRIBUTION.md).
 
 ## Choose a Compression Path
 

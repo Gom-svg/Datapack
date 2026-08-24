@@ -38,7 +38,7 @@ This report uses only these status labels:
 | --- | --- | --- |
 | P0 — Productization Readiness Audit | **CERTIFIED** | `docs/productization/PRODUCTIZATION-READINESS-AUDIT.md` records the read-only baseline audit. Full local Rust certification and protected-fixture verification passed before the logical checkpoint commit. |
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
-| P2 — Python Distribution Foundation | **DEFERRED** | Authorized next phase. Distribution identity is `datapack-engine`; publication remains unauthorized. |
+| P2 — Python Distribution Foundation | **IMPLEMENTED** | Wheel-first `datapack-engine` packaging, manylinux2014 policy, exact artifact inspection, isolated installed-SDK testing, and build-once/test-six Linux/Windows CI are committed. Linux is locally certified; Windows and the hosted P2 matrix are explicitly not run at this unpushed checkpoint. Publication remains unauthorized. |
 | P3 — Progress API | **DEFERRED** | Existing typed Rust foundation audited; no Productization change implemented. |
 | P4 — Cooperative Cancellation | **DEFERRED** | No public cancellation capability exists. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
@@ -157,6 +157,129 @@ P1 changes only release/packaging metadata, tests/gates, and documentation:
 
 No engine, planner, codec, storage, archive parser/writer, protected fixture,
 resource limit, progress, cancellation, or error implementation changed.
+
+## P2 Python distribution outcome
+
+P2 implements the binary distribution contract without changing the DataPack
+engine. The distribution is `datapack-engine`, the import remains `datapack`,
+and the version remains `0.1.0`. The PyO3 adapter still calls the Rust
+Application API; no Python compression, decompression, analysis, validation,
+comparison, planning, archive, or integrity implementation was added.
+
+The initial audit distinguished build dependence from install dependence. The
+binding crate's exact root path dependency requires a complete checkout for a
+builder. The prebuilt wheel itself installed and executed outside the checkout
+without Rust, Cargo, maturin, a repository path, or any Python runtime
+dependency.
+
+The audit also found that the P1 host-built Linux wheel was truthful only for
+`manylinux_2_34_x86_64`, omitted the license file, and contained local absolute
+paths in native panic-location data and maturin's generated path-dependency
+SBOM. P2 resolves those distribution defects by:
+
+- building the Linux artifact against glibc 2.17 with the manylinux2014 policy;
+- pinning maturin 1.14.1 and retaining Rust/Cargo 1.85.0, PyO3 0.29.0, and
+  `abi3-py39`;
+- stripping the extension and remapping workspace/home source paths;
+- excluding the generated Rust SBOM until its absolute path data can be
+  sanitized;
+- including an MIT license file that is automatically required to match the
+  canonical root license; and
+- enforcing an eight-member runtime wheel allowlist.
+
+The locally produced Linux wheel has the exact filename:
+
+```text
+datapack_engine-0.1.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+```
+
+Its WHEEL metadata contains both `cp39-abi3-manylinux_2_17_x86_64` and
+`cp39-abi3-manylinux2014_x86_64`. Auditwheel constrained it to glibc 2.17 and
+reported only policy-provided `libc`, `libm`, `libpthread`, and `libdl` symbol
+dependencies. No native library was grafted into the wheel. The final local
+artifact is 966,326 bytes with SHA-256
+`7e4d12293ba1bea8693d7bd23f7016c2163874337a06ce4b742e565d59d4e22d`.
+The Windows artifact size and digest are **NOT RUN**.
+An immediate same-environment rebuild was byte-identical by `cmp` and SHA-256;
+this is **OBSERVATIONAL** evidence, not an independent-runner reproducibility
+claim.
+
+One unchanged Linux wheel was installed and exercised under CPython 3.9.25,
+3.10.21, 3.11.16, 3.12.14, 3.13.15, and 3.14.7. Each interpreter ran three
+installed-distribution tests covering identity/isolation, the complete v1
+public workflow, and a v2 native-engine round trip: 18 executions, zero
+failures.
+
+The Windows build/test design produces
+`datapack_engine-0.1.0-cp39-abi3-win_amd64.whl`, requires its actual WHEEL tag
+to equal `cp39-abi3-win_amd64`, and reuses that single artifact across CPython
+3.9 through 3.14. The local Windows build is **NOT RUN** because Windows
+Application Control rejects `rustc.exe` with OS error 4551. The new hosted P2
+jobs are also **NOT RUN** because this checkpoint is not pushed. No Windows
+result is inferred from Linux.
+
+The source-distribution audit is **DEFERRED**. Maturin could assemble a complete
+sdist and an extracted copy could build without the original checkout, but the
+result exposes a Rust/native-toolchain installation contract and normal PEP 517
+construction produced a native `linux_x86_64` wheel rather than the certified
+manylinux artifact. P2 therefore remains deliberately wheel-first.
+
+See `docs/productization/PYTHON_DISTRIBUTION.md` for the exact platform,
+installation, CI, contents, sdist, and publication contract.
+
+## P2 local certification
+
+| Gate | Status | Result |
+| --- | --- | --- |
+| Product identity/version and packaging policy | **CERTIFIED** | PASS — `datapack-engine` / `datapack` / `0.1.0`, maturin 1.14.1, PyO3 0.29.0, `abi3-py39` |
+| Linux release wheel build | **CERTIFIED** | PASS — manylinux2014 / glibc 2.17 x86_64 |
+| Same-environment Linux wheel rebuild | **OBSERVATIONAL** | PASS — byte-identical filename, size, and SHA-256 |
+| ABI3 wheel reuse | **CERTIFIED** | PASS — the same wheel on CPython 3.9.25 through 3.14.7 |
+| Installed-distribution tests | **CERTIFIED** | PASS — 18 matrix executions, zero failures |
+| Repository/toolchain isolation | **CERTIFIED** | PASS — temporary cwd/venv, repository absent from `sys.path`, `pip --no-index --no-deps`, Rust/Cargo/maturin absent from `PATH` |
+| Wheel metadata/content/license/path hygiene | **CERTIFIED** | PASS — exact eight-member allowlist, no unexpected artifact or machine-specific absolute path |
+| Linux native dependency audit | **CERTIFIED** | PASS — glibc 2.17 and policy libraries only |
+| Windows wheel build/install | **NOT RUN** | Local Windows Application Control blocked `rustc.exe` (OS error 4551); hosted matrix implemented |
+| Hosted P2 wheel matrix | **NOT RUN** | No push authorized or performed |
+| Source distribution | **DEFERRED** | Technically assembleable, but no supported source-build contract is justified in P2 |
+| PyPI / TestPyPI / crates.io | **NOT RUN** | No account, namespace, credential, reservation, trusted publisher, or upload action |
+| `cargo fmt --all -- --check` | **CERTIFIED** | PASS |
+| `cargo check --locked` | **CERTIFIED** | PASS |
+| `cargo test --locked` | **CERTIFIED** | PASS — 359 tests, zero failures |
+| Strict locked Clippy | **CERTIFIED** | PASS |
+| `cargo build --release --locked` | **CERTIFIED** | PASS |
+| Binding format/check/test/Clippy/release build | **CERTIFIED** | PASS — binding crate has zero Rust unit tests |
+| Python syntax, Ruff lint, and Ruff formatting | **CERTIFIED** | PASS under the Python 3.9 syntax floor |
+| Existing installed SDK tests | **CERTIFIED** | PASS — five tests, zero failures |
+| `cargo deny` core and binding | **CERTIFIED** | PASS with the existing non-failing unmatched-license and duplicate-`syn` warnings |
+| `cargo audit` core and binding | **CERTIFIED** | PASS with only allowed `RUSTSEC-2025-0141` |
+| `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS before commit; clean package verification is repeated after the checkpoint commit |
+| Protected fixture tests, sizes, and SHA-256 | **CERTIFIED** | PASS — four tests and all six immutable values unchanged |
+| Workflow YAML and six-version matrix structure | **CERTIFIED** | PASS |
+| `git diff --check` | **CERTIFIED** | PASS |
+
+## P2 change scope
+
+P2 changes only Python packaging metadata, a mirrored license file, installed
+distribution tests, certification automation, hosted CI, and documentation:
+
+- `.github/workflows/ci.yml`;
+- `README.md`;
+- `docs/productization/DATAPACK-PRODUCTIZATION-REPORT.md`;
+- `docs/productization/PYTHON_DISTRIBUTION.md`;
+- `docs/productization/RELEASE_ARTIFACTS.md`;
+- `docs/reference/PYTHON_SDK_FOUNDATION.md`;
+- `python/DATAPACK-LICENSE-MIT`;
+- `python/README.md`;
+- `python/pyproject.toml`;
+- `python/tests/installed_distribution.py`;
+- `scripts/certify_python_wheel.py`; and
+- `scripts/check_version_consistency.py`.
+
+No Rust source, Python API surface, codec, planner, archive, wire format,
+resource limit, protected fixture, fixture byte, or fixture SHA-256 value is
+changed. PyPI, TestPyPI, crates.io, GitHub Releases, and Git tags remain
+unmodified.
 
 ## Preserved external technical-beta evidence
 

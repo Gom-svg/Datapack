@@ -1,6 +1,7 @@
 # Python SDK foundation
 
-Status: implemented foundation (Phase 13)
+Status: implemented SDK foundation (Phase 13), distributable wheel foundation
+certified on Linux in Productization P2
 
 The Python package in `python/` is a thin PyO3 and maturin adapter over the
 public Rust Application API. It does not contain an independent compressor,
@@ -26,18 +27,22 @@ limits, transaction handling, and byte-exact restoration.
 
 ## Status and requirements
 
-- Package status: alpha SDK foundation, not production distribution readiness
-- Authorized future PyPI distribution: `datapack-engine` (not published or reserved)
+- Package status: pre-1.0 alpha binary distribution, not production readiness
+- Python distribution: `datapack-engine` (not published or reserved)
 - Python import package: `datapack`
 - Python: 3.9 or newer
 - Rust: 1.85 or newer
 - Binding: PyO3 0.29.0
 - Build backend: maturin 1.x
-- Wheel ABI: CPython stable ABI with a Python 3.9 floor
+- Wheel ABI: CPython stable ABI with a Python 3.9 floor (`cp39-abi3`)
+- Linux wheel: GNU x86_64, manylinux2014 / glibc 2.17 floor
+- Windows wheel: MSVC x86_64; hosted build/test matrix implemented and awaiting
+  the first authorized P2 workflow run
 - Dataframe dependencies: none
 
-Wheel builds currently require a complete DataPack checkout because the
-binding crate depends on the root Rust crate by path.
+Wheel builds require a complete DataPack checkout because the binding crate
+depends on the root Rust crate by path. Installed wheels do not require the
+checkout or a Rust toolchain.
 
 ## Public surface
 
@@ -185,7 +190,7 @@ From a complete checkout:
 cd python
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install "maturin>=1.0,<2.0"
+python -m pip install "maturin==1.14.1"
 maturin develop
 python -m unittest discover -s tests -v
 ```
@@ -193,6 +198,18 @@ python -m unittest discover -s tests -v
 Phase 13 certification covers Rust check/format/Clippy, a maturin wheel build,
 wheel installation into an isolated environment, Python API tests, v1 and
 multi-chunk v2 byte-exact round trips, v2 hash validation, and typed failures.
+
+Productization P2 adds exact wheel tag and content inspection, license and
+metadata validation, machine-path hygiene, `pip --no-index --no-deps`
+installation in a temporary environment outside the checkout, and installed
+execution with repository paths absent from `sys.path`. The same Linux
+manylinux2014 wheel is locally certified across CPython 3.9 through 3.14. The
+hosted workflow builds once per Linux/Windows platform and downloads that same
+platform wheel into each of six Python-version jobs.
+
+See [Python Distribution](../productization/PYTHON_DISTRIBUTION.md) for exact
+artifact tags, platform policy, CI design, sdist status, and publication
+boundaries.
 
 ## Explicit non-goals
 
@@ -204,5 +221,5 @@ This foundation does not implement:
 - progress callbacks
 - cancellation
 - Benchmark or Advisor bindings
-- production wheel publication or a release matrix
+- public wheel publication
 - Desktop, GPU, cloud, SaaS, or telemetry functionality
