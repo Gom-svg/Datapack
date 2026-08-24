@@ -1,12 +1,11 @@
 #[path = "../benches/support/mod.rs"]
 mod performance_support;
 
-use std::path::Path;
 use std::time::Duration;
 
 use datapack::application::{self, CompareMode, CompareRequest};
 use datapack::generation::{self, Profile};
-use performance_support::{classify_path, median_duration, run_suite, scenarios, Preset};
+use performance_support::{classify_rendered_path, median_duration, run_suite, scenarios, Preset};
 
 #[test]
 fn deterministic_generators_repeat_for_recorded_seeds() {
@@ -100,21 +99,21 @@ fn full_compare_keeps_factual_scope_and_per_run_identity_contract() {
 }
 
 #[test]
-fn path_classification_separates_wsl_windows_backed_and_linux_native_paths() {
+fn path_classification_rules_are_host_independent() {
     assert_eq!(
-        classify_path(Path::new("/mnt/c/data/input.csv"), true, "linux"),
+        classify_rendered_path("/mnt/c/data/input.csv", true, "linux"),
         "wsl_windows_backed_filesystem"
     );
     assert_eq!(
-        classify_path(Path::new("/tmp/input.csv"), true, "linux"),
+        classify_rendered_path("/tmp/input.csv", true, "linux"),
         "wsl_linux_native_filesystem"
     );
     assert_eq!(
-        classify_path(Path::new("/var/tmp/input.csv"), false, "linux"),
+        classify_rendered_path("/var/tmp/input.csv", false, "linux"),
         "native_linux_filesystem"
     );
     assert_eq!(
-        classify_path(Path::new("C:\\data\\input.csv"), false, "windows"),
+        classify_rendered_path("C:\\data\\input.csv", false, "windows"),
         "native_windows_filesystem"
     );
 }

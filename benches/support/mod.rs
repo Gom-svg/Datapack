@@ -759,7 +759,11 @@ fn capture_environment(workspace: &Path, report_output: Option<&Path>) -> Enviro
 }
 
 pub fn classify_path(path: &Path, wsl: bool, os: &str) -> String {
-    let normalized = display_absolute(path).replace('\\', "/");
+    classify_rendered_path(&display_absolute(path), wsl, os)
+}
+
+pub fn classify_rendered_path(path: &str, wsl: bool, os: &str) -> String {
+    let normalized = path.replace('\\', "/");
     if wsl && is_wsl_windows_mount(&normalized) {
         "wsl_windows_backed_filesystem".to_string()
     } else if wsl {

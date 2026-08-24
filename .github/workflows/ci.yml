@@ -81,7 +81,7 @@ jobs:
           manifest-path: ./python/Cargo.toml
           command: check
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked --version 0.22.2
+        run: cargo install cargo-audit --locked --version 0.22.1
       - name: Audit core dependencies
         run: cargo audit
       - name: Audit Python binding dependencies

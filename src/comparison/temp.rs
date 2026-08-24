@@ -135,7 +135,10 @@ impl Drop for ComparisonWorkspace {
 }
 
 fn create_workspace_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
     let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

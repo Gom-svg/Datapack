@@ -404,9 +404,30 @@ Its timing remains contextual; its correctness assertions passed, and it must
 not be used as a universal performance baseline. Earlier `7a46d47` and
 `23f875b` smoke evidence remains part of the historical record above.
 
-Hosted GitHub CI is **CONFIGURED BUT NOT RUN ON THE LOCAL MODERNIZATION
-COMMITS**. No hosted-CI success is claimed. The Linux/Windows workflow and its
-read-only permissions remain committed for execution on push or pull request.
+At the time of the local certification targets above, hosted GitHub CI was
+**CONFIGURED BUT NOT RUN ON THE LOCAL MODERNIZATION COMMITS**. No hosted-CI
+success was claimed. The Linux/Windows workflow and its read-only permissions
+were committed for execution on push or pull request.
+
+### First hosted CI execution
+
+After publication, hosted CI run `32676153647` is **RUN — FAILED**:
+
+- Rust 1.85 on `ubuntu-latest`: PASS;
+- Python SDK foundation: PASS;
+- Dependency policy and package: FAILED during `cargo-audit` installation
+  because version 0.22.2 requires a newer Rust compiler than the certified
+  Rust 1.85.0 toolchain; and
+- Rust 1.85 on `windows-latest`: FAILED on one Phase 16 path-classification
+  portability test.
+
+The dependency audit commands did not execute, so the installer failure is not
+evidence of an audit finding. The Windows failure did not change archive bytes
+or expose a v1/v2 compatibility failure. The targeted remediation pins
+`cargo-audit` 0.22.1, tests WSL classification through injected rendered path
+text, and makes Unix-only directory-builder mutability configuration-specific.
+DataPack is not fully hosted-certified until a subsequent hosted run passes
+every required job.
 
 ## 8. Protected compatibility evidence
 
