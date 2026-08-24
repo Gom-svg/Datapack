@@ -1,6 +1,6 @@
 # DataPack Python Distribution
 
-Status: **IMPLEMENTED — Productization P2**
+Status: **CERTIFIED — Productization P2**
 
 This document defines the wheel-first Python distribution contract implemented
 in P2. It does not authorize a registry upload or claim that a public release
@@ -26,10 +26,10 @@ application code uses `import datapack`.
 | Dimension | Contract | Evidence |
 | --- | --- | --- |
 | Python implementation | GIL-enabled CPython | **IMPLEMENTED** |
-| Python versions | 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 | **CERTIFIED** locally on Linux; hosted matrix **IMPLEMENTED**, not yet run for P2 |
+| Python versions | 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 | **CERTIFIED** locally on Linux and in hosted isolated-install matrices on Linux and Windows |
 | ABI | CPython stable ABI, floor `abi3-py39` | **CERTIFIED** by `cp39-abi3` wheel tags and reuse of one wheel across six CPython minors |
-| Linux | GNU x86_64, glibc 2.17 or newer | **CERTIFIED** locally as manylinux2014 / `manylinux_2_17_x86_64` |
-| Windows | MSVC x86_64 | Build and six-version hosted matrix **IMPLEMENTED**; local artifact **NOT RUN** because Windows Application Control blocked `rustc.exe` with OS error 4551 |
+| Linux | GNU x86_64, glibc 2.17 or newer | **CERTIFIED** locally and hosted as manylinux2014 / `manylinux_2_17_x86_64` |
+| Windows | MSVC x86_64 | **CERTIFIED** by hosted build, inspection, and six-version isolated execution; local build **NOT RUN** because Windows Application Control blocked `rustc.exe` with OS error 4551 |
 
 The exact Linux filename policy is:
 
@@ -51,9 +51,8 @@ datapack_engine-{version}-cp39-abi3-win_amd64.whl
 cp39-abi3-win_amd64
 ```
 
-The Windows artifact remains **NOT RUN** at this unpushed checkpoint. Its tag
-must be observed and accepted by the committed wheel inspector before hosted
-certification can pass.
+Hosted run `32698666658` produced and accepted the exact Windows filename and
+tag, then reused that one platform wheel across CPython 3.9 through 3.14.
 
 Free-threaded CPython uses a different ABI family and is not part of this
 `abi3-py39` contract.
@@ -137,8 +136,8 @@ claim.
 
 The final local Linux wheel is 966,326 bytes with SHA-256
 `7e4d12293ba1bea8693d7bd23f7016c2163874337a06ce4b742e565d59d4e22d`.
-The Windows wheel size and digest are **NOT RUN** until the hosted artifact is
-produced.
+The hosted Windows wheel is 729,926 bytes with SHA-256
+`311ec7a6fe4de51e4c1f73884d4aec25fd8f3024e7348ee726250435c4d5b946`.
 
 An immediate second local build from the same checkout, toolchain, target, and
 environment was byte-identical (`cmp` and SHA-256). This is **OBSERVATIONAL**
@@ -184,9 +183,20 @@ These are **CI ARTIFACTS**, not public releases. No workflow step creates a
 GitHub Release, pushes a tag, uploads to PyPI/TestPyPI, configures trusted
 publishing, or uploads to crates.io.
 
-At this checkpoint the P2 workflow is **NOT RUN** because no push is authorized.
-The previous P1 hosted run remains successful evidence for the pre-P2 jobs, not
-a substitute for the new wheel matrix.
+The first hosted P2 run, `32697219488`, **FAILED** after the Linux wheel built:
+inspection found `/home/runner/` source-location strings in the native
+extension, so Linux artifact upload and the downstream matrix were skipped. The
+failure remains historical evidence and is not rewritten as success. A narrow
+Linux-only `${GITHUB_WORKSPACE}` path remap corrected the cause without changing
+the certifier or its wheel-content and absolute-path policy.
+
+Hosted run `32698666658` has result **SUCCESS** and evidence status
+**CERTIFIED** at technical checkpoint
+`cc128bb687b1cfbe64c6b6c7b912f31862176588`. Both platform wheels built, passed
+exact inspection, and uploaded as CI artifacts. All 12 isolated jobs passed:
+the same Linux wheel and the same Windows wheel were each installed and
+exercised on CPython 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14. The legacy/core,
+Python SDK, dependency-policy, and package jobs also passed.
 
 ## 8. Wheel contents and typing
 
@@ -227,8 +237,9 @@ supported source-build user contract is explicitly desired.
 - TestPyPI publication: **NOT RUN / NOT AUTHORIZED**.
 - crates.io publication or namespace reservation: **NOT RUN / DEFERRED**.
 - GitHub Release or release tag: **NOT RUN / NOT AUTHORIZED**.
-- Windows P2 artifact execution: **NOT RUN locally**; committed hosted coverage
-  awaits an authorized push.
+- Windows P2 artifact execution: **CERTIFIED** in hosted CI across CPython 3.9
+  through 3.14; local compilation remains **NOT RUN** because Windows
+  Application Control blocks `rustc.exe` with OS error 4551.
 - macOS, Linux musl, non-x86_64 systems, PyPy, and free-threaded CPython:
   **DESIGN ONLY / OUTSIDE THE P2 SUPPORT CONTRACT**.
 

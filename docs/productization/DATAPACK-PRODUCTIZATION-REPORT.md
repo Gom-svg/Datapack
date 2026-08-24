@@ -26,6 +26,8 @@ This report uses only these status labels:
 | Modernization checkpoint | **CERTIFIED** | `modernization-complete-2026-08-23` at `6ddc50f695b918e1f6c7daaeedd8d3674ef753d7` |
 | Hosted technical CI | **CERTIFIED** | run `32681781845` |
 | Hosted final documentation CI | **CERTIFIED** | run `32683577404` |
+| Hosted P1 CI | **CERTIFIED** | run `32694107348` |
+| Hosted P2 distribution CI | **CERTIFIED** | run `32698666658` at technical checkpoint `cc128bb687b1cfbe64c6b6c7b912f31862176588` |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -38,7 +40,7 @@ This report uses only these status labels:
 | --- | --- | --- |
 | P0 — Productization Readiness Audit | **CERTIFIED** | `docs/productization/PRODUCTIZATION-READINESS-AUDIT.md` records the read-only baseline audit. Full local Rust certification and protected-fixture verification passed before the logical checkpoint commit. |
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
-| P2 — Python Distribution Foundation | **IMPLEMENTED** | Wheel-first `datapack-engine` packaging, manylinux2014 policy, exact artifact inspection, isolated installed-SDK testing, and build-once/test-six Linux/Windows CI are committed. Hosted run `32697219488` failed only at Linux build-path hygiene after the core and Windows wheel-build gates passed. A narrow remapping remediation is locally certified; its hosted rerun is **NOT RUN**. Publication remains unauthorized. |
+| P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed hosted run `32698666658`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **DEFERRED** | Existing typed Rust foundation audited; no Productization change implemented. |
 | P4 — Cooperative Cancellation | **DEFERRED** | No public cancellation capability exists. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
@@ -128,7 +130,7 @@ local packaging evidence, not a P2 Linux portability claim or a published artifa
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 158 packaged files, 1.6 MiB unpacked, 388.6 KiB compressed |
 | Protected fixture tests, sizes, and SHA-256 | **CERTIFIED** | PASS — four tests and all six immutable values unchanged |
 | `git diff --check` | **CERTIFIED** | PASS |
-| Hosted P1 CI | **NOT RUN** | No push was authorized or performed. |
+| Hosted P1 CI | **CERTIFIED** | PASS — run `32694107348` |
 
 ## P1 change scope
 
@@ -216,9 +218,9 @@ The Windows build/test design produces
 to equal `cp39-abi3-win_amd64`, and reuses that single artifact across CPython
 3.9 through 3.14. The local Windows build is **NOT RUN** because Windows
 Application Control rejects `rustc.exe` with OS error 4551. Hosted run
-`32697219488` built and inspected the Windows artifact successfully. Its
-installed-version matrix was skipped because the failed Linux build job did not
-upload its required artifact. No Windows result is inferred from Linux.
+`32698666658` built, inspected, uploaded, installed, and exercised the Windows
+artifact successfully across CPython 3.9 through 3.14. This is independent
+Windows evidence; no Windows result is inferred from Linux.
 
 The source-distribution audit is **DEFERRED**. Maturin could assemble a complete
 sdist and an extracted copy could build without the original checkout, but the
@@ -264,8 +266,30 @@ Explicit binary and whole-wheel scans found no `/home/runner`, `/home/`,
 `/io/` substring matches were inspected individually; all were the `/src/io/`
 portion of Rust's virtual `/rustc/.../library/...` standard-library paths, with
 zero `/io` Docker mount paths. The exact eight-member allowlist and absolute-path
-hygiene policy remain unchanged. A hosted rerun of the remediation is
-**NOT RUN**.
+hygiene policy remain unchanged.
+
+## P2 hosted certification closure
+
+Run `32698666658` — result **SUCCESS**, evidence status **CERTIFIED**, at
+technical checkpoint `cc128bb687b1cfbe64c6b6c7b912f31862176588`.
+
+All required jobs passed:
+
+- Rust 1.85 on Ubuntu and Windows;
+- Python SDK foundation;
+- dependency policy and package verification;
+- Linux GNU x86_64 ABI3 wheel build, inspection, and CI artifact upload;
+- Windows MSVC x86_64 ABI3 wheel build, inspection, and CI artifact upload;
+- isolated execution of the one Linux platform wheel on CPython 3.9, 3.10,
+  3.11, 3.12, 3.13, and 3.14; and
+- isolated execution of the one Windows platform wheel on CPython 3.9, 3.10,
+  3.11, 3.12, 3.13, and 3.14.
+
+Each platform therefore has direct hosted build, artifact-hygiene, upload,
+clean-install, import, identity, version, and representative native SDK
+execution evidence. The same ABI3 wheel was reused across all six CPython
+versions on its platform. Run `32697219488` remains the historical failed run;
+it is not rewritten or counted as successful evidence.
 
 ## P2 local certification
 
@@ -279,10 +303,10 @@ hygiene policy remain unchanged. A hosted rerun of the remediation is
 | Repository/toolchain isolation | **CERTIFIED** | PASS — temporary cwd/venv, repository absent from `sys.path`, `pip --no-index --no-deps`, Rust/Cargo/maturin absent from `PATH` |
 | Wheel metadata/content/license/path hygiene | **CERTIFIED** | PASS — exact eight-member allowlist, no unexpected artifact or machine-specific absolute path |
 | Linux native dependency audit | **CERTIFIED** | PASS — glibc 2.17 and policy libraries only |
-| Windows wheel build/inspection | **CERTIFIED** | PASS in hosted run `32697219488`; local Windows Application Control still blocks `rustc.exe` (OS error 4551) |
-| Windows wheel installed-version matrix | **NOT RUN** | Skipped because the failed Linux build job prevented the required build-job dependency from completing |
-| Remediated hosted Linux wheel inspection | **NOT RUN** | Run `32697219488` failed on the pre-remediation `/home/runner/` leak; remediation rerun not pushed |
-| Hosted P2 installed-version matrix | **NOT RUN** | Skipped in run `32697219488`; remediation rerun not pushed |
+| Windows wheel build/inspection | **CERTIFIED** | PASS in hosted run `32698666658`; local Windows Application Control still blocks `rustc.exe` (OS error 4551) |
+| Windows wheel installed-version matrix | **CERTIFIED** | PASS — one `cp39-abi3-win_amd64` wheel executed on CPython 3.9 through 3.14 in run `32698666658` |
+| Remediated hosted Linux wheel inspection | **CERTIFIED** | PASS — manylinux2014 build, exact inspection, and CI artifact upload in run `32698666658` |
+| Hosted P2 installed-version matrix | **CERTIFIED** | PASS — all 12 Linux/Windows CPython 3.9–3.14 jobs in run `32698666658` |
 | Source distribution | **DEFERRED** | Technically assembleable, but no supported source-build contract is justified in P2 |
 | PyPI / TestPyPI / crates.io | **NOT RUN** | No account, namespace, credential, reservation, trusted publisher, or upload action |
 | `cargo fmt --all -- --check` | **CERTIFIED** | PASS |
