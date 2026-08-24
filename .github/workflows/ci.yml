@@ -100,7 +100,10 @@ jobs:
       - name: Remap Linux build paths
         if: runner.os == 'Linux'
         shell: bash
-        run: echo "RUSTFLAGS=--remap-path-prefix=/io=datapack-src --remap-path-prefix=/root=build-home" >> "$GITHUB_ENV"
+        run: >-
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=datapack-src
+          --remap-path-prefix=/io=datapack-src
+          --remap-path-prefix=/root=build-home" >> "$GITHUB_ENV"
       - name: Remap Windows build paths
         if: runner.os == 'Windows'
         shell: pwsh
