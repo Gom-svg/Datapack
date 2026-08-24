@@ -34,6 +34,7 @@ This report uses only these status labels:
 | Hosted P4 cancellation CI | **CERTIFIED** | run `32709843703` at Windows strict-Clippy remediation checkpoint `585074907c98a6ff3fe52d50fa9688b43fe5aaf7`; all 18 required jobs passed |
 | Certified pre-P5 checkpoint | **CERTIFIED** | `bc08ed570a21a32cd72a9c494e710dbe6ed09109` on `productization/foundation`, `origin/productization/foundation`, `main`, and `origin/main` |
 | Hosted pre-P5 branch CI | **CERTIFIED** | `productization/foundation` run `32712910071` and `main` run `32713671052`; both SUCCESS |
+| Hosted P5 API/error CI | **CERTIFIED** | run `32716713250` at technical checkpoint `5bed871036621911863d26b67e27a54019370104`; all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -49,7 +50,7 @@ This report uses only these status labels:
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
-| P5 — Public API / Error Product Polish | **IMPLEMENTED**, locally **CERTIFIED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation pass all local gates. Hosted P5 execution is **NOT RUN** pending a separately authorized push. |
+| P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
@@ -716,13 +717,14 @@ The complete methodology, limitations, and result record are in
 `docs/productization/BETA-TEST-002.md`. P5 had not started when this external
 test ran; its subsequent outcome is recorded below.
 
-## P5 public API and error experience outcome
+## P5 product API and error experience outcome
 
-P5 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted P5 certification is
-**NOT RUN** because no push is authorized in this phase. P5 starts from the
-certified checkpoint `bc08ed570a21a32cd72a9c494e710dbe6ed09109`; the branch,
-upstream, worktree, index, and shared main recovery boundary were verified
-before editing.
+P5 is **IMPLEMENTED**, locally **CERTIFIED**, hosted-CI **CERTIFIED**, and
+**CLOSED**. The technical checkpoint is
+`5bed871036621911863d26b67e27a54019370104`; hosted run `32716713250`
+completed with result **SUCCESS**. P5 started from certified checkpoint
+`bc08ed570a21a32cd72a9c494e710dbe6ed09109`; the branch, upstream, worktree,
+index, and shared main recovery boundary were verified before implementation.
 
 The read-only public-surface audit found that DataPack already had a coherent
 Application execution model: six typed Rust operations, versioned result
@@ -820,12 +822,31 @@ P6 has not started.
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 166 files, 1.8 MiB, 436.4 KiB compressed, verification build passed |
 | Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
 | Beta Test 002 evidence | **CERTIFIED** | Preserved as historical PASS; its approximately 1.041-second timing remains **OBSERVATIONAL** |
-| Windows/MSVC and CPython 3.9–3.14 hosted P5 regression | **NOT RUN** | Requires the future authorized push; all 18 existing jobs remain configured unchanged |
+| Linux/Windows and CPython 3.9–3.14 hosted P5 regression | **CERTIFIED** | PASS — all 18 required jobs passed in run `32716713250`, including native Linux and Windows Rust, strict Clippy, Python SDK, dependency/package policy, both ABI3 wheel builds/inspection, and isolated execution on CPython 3.9 through 3.14 on both platforms |
 | `git diff --check` | **CERTIFIED** | PASS |
 
-PyPI, TestPyPI, crates.io, GitHub Releases, tags, pushes, merges, and registry
-credentials remain **NOT RUN**. DataPack is not claimed production-ready and
-has no external security audit.
+### P5 hosted certification closure
+
+Run `32716713250` — result **SUCCESS**, evidence status **CERTIFIED**, at P5
+technical checkpoint `5bed871036621911863d26b67e27a54019370104`. All 18
+required hosted jobs passed:
+
+- Rust 1.85 on native Ubuntu and Windows, including strict Clippy;
+- the Python SDK and dependency/package policy, including cargo audit and
+  package verification;
+- Linux GNU x86_64 and Windows MSVC x86_64 ABI3 wheel build, identity/tag/
+  metadata/content inspection, and CI artifact handling; and
+- isolated execution of each platform wheel on CPython 3.9, 3.10, 3.11, 3.12,
+  3.13, and 3.14.
+
+This hosted evidence confirms that P5 preserves the certified Rust, Python,
+progress, cancellation, dependency, packaging, wheel-hygiene, and cross-
+platform distribution contracts. It does not establish production readiness
+or authorize publication. P6 remains **DEFERRED** and has not started.
+
+P5 PyPI, TestPyPI, crates.io, GitHub Release, tag, merge, registry-credential,
+and public-release actions remain **NOT RUN**. DataPack is not claimed
+production-ready and has no external security audit.
 
 ## Preserved external technical-beta evidence
 
