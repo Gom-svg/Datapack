@@ -5,6 +5,13 @@ Application API. Rust remains the source of truth for analysis, planning,
 compression, decompression, validation, comparison, security limits, and
 byte-exact restoration.
 
+The authorized future PyPI distribution name is `datapack-engine`; the import
+package remains `datapack`. It has not been published or reserved. A separately
+authorized public release may eventually install with
+`pip install datapack-engine` while application code continues to use
+`import datapack`. Do not install the unrelated PyPI distribution named `datapack`
+expecting this engine.
+
 The foundation exposes synchronous, path-based functions:
 
 ```python

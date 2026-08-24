@@ -27,6 +27,8 @@ limits, transaction handling, and byte-exact restoration.
 ## Status and requirements
 
 - Package status: alpha SDK foundation, not production distribution readiness
+- Authorized future PyPI distribution: `datapack-engine` (not published or reserved)
+- Python import package: `datapack`
 - Python: 3.9 or newer
 - Rust: 1.85 or newer
 - Binding: PyO3 0.29.0

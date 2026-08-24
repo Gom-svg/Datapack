@@ -3,9 +3,11 @@ name = "datapack"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Lossless flat-data compression tool for CSV, TXT, logs, and database exports"
+publish = false
+description = "Structure-aware, byte-exact compression and archive engine for structured text data"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/Gom-svg/Datapack"
 keywords = ["compression", "csv", "archive", "lossless", "cli"]
 categories = ["command-line-utilities", "compression", "encoding"]
 

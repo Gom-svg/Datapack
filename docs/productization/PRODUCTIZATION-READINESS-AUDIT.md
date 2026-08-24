@@ -511,3 +511,22 @@ name/ownership choices.
 **RECOMMENDATION:** Stop after the P0 documentation checkpoint and request the
 owner's public distribution-name decision. This is the program's specified stop
 behavior; it is not a technical failure and does not reopen modernization.
+
+## 6. Distribution identity decision — resolved after P0
+
+**FACT:** After the certified P0 checkpoint, the owner authorized the following
+Productization identity:
+
+- product brand: DataPack;
+- CLI executable: `datapack`;
+- Python distribution: `datapack-engine`;
+- Python import: `datapack`;
+- internal Rust package/crate: `datapack`; and
+- crates.io publication: deferred and out of scope for Productization Foundation.
+
+**FACT:** PyPI project reservation/publication and every crates.io publication
+remain unauthorized external actions.
+
+**INFERENCE:** The P0 naming blocker is resolved for P1/P2 preparation without
+renaming the product, CLI, Python import, or internal Rust crate. P1 may proceed;
+actual public publication remains a stop condition.

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from importlib.metadata import version
 from pathlib import Path
 
 import datapack
@@ -17,6 +18,9 @@ class DataPackSdkTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
+
+    def test_distribution_identity_and_version_are_consistent(self) -> None:
+        self.assertEqual(version("datapack-engine"), datapack.__version__)
 
     def test_v1_services_are_path_based_and_byte_exact(self) -> None:
         analysis = datapack.analyze(self.source, sample_mb=1)

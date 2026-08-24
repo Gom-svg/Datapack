@@ -9,6 +9,7 @@ fn structured_cli_surface_is_stable() {
     let root = Cli::command();
 
     assert_eq!(root.get_name(), "datapack");
+    assert_eq!(root.get_version(), Some(env!("CARGO_PKG_VERSION")));
     assert_eq!(
         subcommand_names(&root),
         string_set(&[

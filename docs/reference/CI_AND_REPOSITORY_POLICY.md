@@ -1,6 +1,6 @@
 # CI and repository policy
 
-Status: Phase 14 baseline
+Status: Phase 14 baseline plus Productization P1 release controls
 
 DataPack's local and hosted checks are pinned to Rust 1.85.0. The crate also
 declares `rust-version = "1.85"`; `rust-toolchain.toml` makes the exact
@@ -16,8 +16,9 @@ The workflow has three independent jobs:
 1. **Rust 1.85** runs formatting, `cargo check --locked`, the full Rust test
    suite, and strict all-target/all-feature Clippy on Linux and Windows.
 2. **Python SDK foundation** checks and lints the separate binding crate,
-   builds an ABI3 wheel with maturin, installs the wheel on Python 3.14, and
-   runs the installed-package tests.
+   verifies product identity/version consistency, builds an ABI3 wheel with
+   maturin, installs the wheel on Python 3.14, and runs the installed-package
+   tests, including distribution/import version identity.
 3. **Dependency policy and package** runs cargo-deny and cargo-audit for both
    Rust manifests/lockfiles, then verifies `cargo package --locked` for the
    core crate.
@@ -71,6 +72,18 @@ or advisories are not silently ignored by this compatibility exception.
 
 ## Packaging
 
-`cargo package --locked` verifies the core Rust crate. No fabricated repository,
-homepage, security contact, or release metadata is added. The Python package is
-an alpha checkout-based foundation and is not published by this workflow.
+`cargo package --locked` verifies the core Rust crate. The manifest records the
+verified source repository and explicitly sets `publish = false`; crates.io
+publication is out of scope for Productization Foundation. The Python package is
+an alpha checkout-based foundation whose authorized distribution name is
+`datapack-engine` and whose import remains `datapack`. It is not published by this
+workflow.
+
+`VERSION` is the canonical package/application version. The root and binding Cargo
+versions, exact path dependency, Python distribution version, Python import
+version, lockfile entries, CLI identity, and distribution/import identities are
+checked by `scripts/check_version_consistency.py`.
+
+P1 defines release/versioning and artifact/checksum policy but does not create a
+release workflow or public artifact. Those remain later Productization phases and
+explicit publication actions remain separately authorized.

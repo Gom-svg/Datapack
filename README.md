@@ -12,6 +12,19 @@ zstd. Compression ratio and throughput depend on the input, options, build,
 hardware, filesystem, cache state, and validation scope. DataPack instead makes
 the selected archive path, integrity evidence, and measured scope explicit.
 
+## Distribution Status
+
+DataPack has not made a public product release. There is currently no supported
+PyPI, crates.io, or downloadable binary installation. The authorized future PyPI
+distribution name is `datapack-engine`, while the Python import remains
+`datapack`. Public PyPI publication is not authorized yet; do not install the
+unrelated `datapack` project from PyPI expecting this engine.
+
+The Rust package remains internally named `datapack` with crates.io publication
+disabled for the Productization Foundation program. See the
+[versioning and release policy](docs/productization/VERSIONING_AND_RELEASE_POLICY.md)
+and [release artifact policy](docs/productization/RELEASE_ARTIFACTS.md).
+
 ## Choose a Compression Path
 
 | Path | Archive | Best fit | Important tradeoff |

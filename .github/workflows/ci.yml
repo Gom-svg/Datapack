@@ -24,13 +24,13 @@ jobs:
       - name: Report toolchain
         run: rustc --version && cargo --version
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
       - name: Check crate
         run: cargo check --locked
       - name: Run tests
         run: cargo test --locked
       - name: Run strict Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   python:
     name: Python SDK foundation
@@ -46,6 +46,8 @@ jobs:
           python-version: "3.14"
       - name: Install maturin
         run: python -m pip install "maturin>=1.0,<2.0"
+      - name: Check product identity and version consistency
+        run: python scripts/check_version_consistency.py
       - name: Check binding formatting
         run: cargo fmt --manifest-path python/Cargo.toml --check
       - name: Check binding crate
@@ -53,7 +55,7 @@ jobs:
       - name: Run binding test build
         run: cargo test --manifest-path python/Cargo.toml --locked
       - name: Run strict binding Clippy
-        run: cargo clippy --manifest-path python/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path python/Cargo.toml --all-targets --locked -- -D warnings
       - name: Build wheel
         run: maturin build --manifest-path python/Cargo.toml --locked --interpreter python --out python/dist
       - name: Install wheel

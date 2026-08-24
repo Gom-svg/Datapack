@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-& cargo fmt --check
+& cargo fmt --all -- --check
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 & cargo check --locked
@@ -10,7 +10,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & cargo test --locked
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-& cargo clippy --all-targets --all-features -- -D warnings
+& cargo clippy --all-targets --all-features --locked -- -D warnings
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 & cargo build --release --locked
