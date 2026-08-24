@@ -1,15 +1,17 @@
 # DataPack modernization report
 
-- Status: **complete through Phase 17; final local certification passed**
+- Status: **complete through Phase 17; local and required hosted CI certification passed**
 - Initial report/certification date: 2026-08-18 (America/Costa_Rica)
 - Final update date: 2026-08-23 (America/Costa_Rica)
 - Initial certification target: `7a46d47074f40b8279fc8b4c86705d60d233862c`
 - Second-recovery recertification target: `23f875bc06e7c883fb5cc72b4abe76075f7cc05e`
 - Final report-head recertification target: `cd034a3b73a16db17fc19cf37cfe2401d1e6af95`
+- Hosted CI certification target: `6ddc50f695b918e1f6c7daaeedd8d3674ef753d7`
+- Hosted CI: **CERTIFIED** — run `32681781845`
 - Phase 16 tag: `rfc-016-performance-regression-suite`
 - Phase 17 tag: `rfc-017-dpack-v3-design`
 - Certified toolchain: Rust/Cargo 1.85.0
-- Repository action: local commits and annotated tags only; nothing pushed
+- Repository action: modernization commits and annotated tags published
 
 ## 1. Executive outcome
 
@@ -31,10 +33,11 @@ The repository now has:
 - a detailed `.dpack` v3 structured-chunk design with no v3 implementation.
 
 Final local certification passed every executed core, binding, dependency,
-package, compatibility, and performance-correctness gate. No protected archive
-hash changed. No v1/v2 wire semantic changed. No generated benchmark dataset,
-archive, restored output, JSON result, wheel, or multi-gigabyte external source
-was added to Git.
+package, compatibility, and performance-correctness gate. The required hosted
+GitHub CI workflow subsequently passed on Linux, Windows, the Python SDK, and
+dependency/package policy. No protected archive hash changed. No v1/v2 wire
+semantic changed. No generated benchmark dataset, archive, restored output,
+JSON result, wheel, or multi-gigabyte external source was added to Git.
 
 ### Evidence status vocabulary
 
@@ -43,7 +46,7 @@ This report uses the following labels consistently:
 | Label | Meaning in this report |
 | --- | --- |
 | **IMPLEMENTED** | Executable behavior is present in the repository. |
-| **CERTIFIED** | The stated local correctness, compatibility, package, or policy gates passed at the named target. |
+| **CERTIFIED** | The stated local or hosted correctness, compatibility, package, or policy gates passed at the named target. |
 | **EXPERIMENTAL** | Executable but non-default behavior with narrower evidence and no production-readiness claim. |
 | **OBSERVATIONAL** | Environment-specific evidence, including wall-clock measurements, that is not a deterministic failure threshold. |
 | **DESIGN ONLY** | A reviewed design boundary exists, but executable behavior is intentionally absent. |
@@ -426,8 +429,8 @@ evidence of an audit finding. The Windows failure did not change archive bytes
 or expose a v1/v2 compatibility failure. The targeted remediation pins
 `cargo-audit` 0.22.1, tests WSL classification through injected rendered path
 text, and makes Unix-only directory-builder mutability configuration-specific.
-DataPack is not fully hosted-certified until a subsequent hosted run passes
-every required job.
+At that historical point, DataPack was not fully hosted-certified because a
+subsequent hosted run still needed to pass every required job.
 
 ### Second hosted CI execution
 
@@ -443,9 +446,27 @@ Clippy gate remaining:
   `clippy::result_large_err` at the crate-private `V2ValidationError` boundary.
 
 The prior `cargo-audit` bootstrap incompatibility and Windows Phase 16 path
-classification failure are fixed, and native Windows tests now pass. Hosted
-certification remains incomplete until a subsequent run passes every required
-job.
+classification failure were fixed, and native Windows tests passed. At that
+historical point, hosted certification remained incomplete because a
+subsequent run still needed to pass every required job.
+
+### Third hosted CI execution — successful certification
+
+Hosted CI run `32681781845` certified commit
+`6ddc50f695b918e1f6c7daaeedd8d3674ef753d7` with **SUCCESS**:
+
+- Rust 1.85 on `ubuntu-latest`: PASS;
+- Rust 1.85 on `windows-latest`: PASS, including native Windows `cargo check`,
+  Rust tests, and strict Clippy;
+- Python SDK foundation: PASS; and
+- Dependency policy and package: PASS, proving that the Rust-1.85-compatible
+  `cargo-audit` bootstrap and the intended hosted dependency, audit, and
+  package gates execute successfully.
+
+Every required hosted job passed. DataPack modernization is therefore locally
+certified and **HOSTED CI CERTIFIED** for its committed modernization scope.
+The published annotated tag `modernization-complete-2026-08-23` preserves
+`6ddc50f` as the technical modernization-completion checkpoint.
 
 ## 8. Protected compatibility evidence
 
@@ -523,12 +544,16 @@ Final report-head recertification then ran against that clean update:
 
 ## 11. Final verdict
 
-The authorized modernization is locally certified and internally coherent.
+DataPack modernization is complete for its authorized scope and is certified
+by both the documented local gates and the required hosted GitHub CI workflow.
+That hosted certification covers Rust 1.85 on Linux and native Windows, the
+Python SDK foundation, and dependency/package policy execution.
+
 Correctness and integrity remain hard gates; performance remains contextual
 evidence. V1/v2 compatibility is protected by immutable hashes and executable
 tests. The reusable Rust Application API is the source of truth for CLI and
 Python consumers. Phase 16 supplies a non-flaky regression/observation
 framework, and Phase 17 supplies a bounded, version-isolated v3 design without
-crossing into implementation.
-
-No stop condition was triggered, and nothing was pushed.
+crossing into implementation. This closure does not claim production
+readiness, an external security audit, or completion of any deferred product
+surface.
