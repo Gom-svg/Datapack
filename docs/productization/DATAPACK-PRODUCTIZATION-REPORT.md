@@ -45,7 +45,7 @@ This report uses only these status labels:
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
 | P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
-| P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally. Hosted P4 certification is **NOT RUN**. |
+| P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally. Hosted run `32708310316` passed every functional and distribution job but failed Windows strict Clippy; the narrow portability remediation is pending a hosted rerun. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
@@ -477,10 +477,11 @@ policy, dependency, CI workflow, or release/publication state changed in P3.
 
 ## P4 cooperative cancellation outcome
 
-P4 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted P4 certification is
-**NOT RUN**. The starting checkpoint was
-`138cdf1812191ad0e45d07f9feb009a1b29d6c6e`, whose P3 documentation closure
-passed all 18 hosted jobs in run `32703591864`.
+P4 is **IMPLEMENTED** and locally **CERTIFIED**. Hosted run `32708310316`
+passed every functional and distribution job but failed the Windows strict
+Clippy gate; the narrow remediation is pending a hosted rerun. The starting
+checkpoint was `138cdf1812191ad0e45d07f9feb009a1b29d6c6e`, whose P3 documentation
+closure passed all 18 hosted jobs in run `32703591864`.
 
 The initial read-only audit found no public cancellation primitive. The v2
 compression pipeline had a private `Arc<AtomicBool>` used only to stop sibling
@@ -602,8 +603,54 @@ latency or overhead claim.
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 163 files, 1.7 MiB, 422.7 KiB compressed, verification build passed |
 | Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
 | Progress and cancellation regression | **CERTIFIED** | PASS — no false terminal success on cancellation; never-cancelled controlled output remained byte-identical |
-| Windows and CPython 3.9–3.14 hosted P4 regression | **NOT RUN** | P4 hosted CI has not run. The unchanged P3 baseline passed all 18 jobs in runs `32701817032` and `32703591864`. |
+| Windows and CPython 3.9–3.14 hosted P4 regression | **NOT RUN** | Run `32708310316` passed Windows tests, both platform wheel builds/inspection/uploads, and all 12 isolated CPython 3.9–3.14 executions, but the overall run failed Windows strict Clippy. A remediation rerun has not occurred. |
 | `git diff --check` | **CERTIFIED** | PASS |
+
+### P4 hosted Windows strict-Clippy remediation
+
+Hosted run `32708310316` — result **FAILED**. Linux Rust, Windows formatting,
+check, and tests, the Python SDK, dependency/package policy, Linux and Windows
+ABI3 wheel build/inspection/artifact upload, and isolated wheel execution on
+both platforms across CPython 3.9 through 3.14 all passed. The only failed gate
+was Windows Rust 1.85 strict Clippy:
+
+`src/storage/chunked.rs:1183` returned
+`Result<(), ControlledV2ValidationError>`, whose
+`ControlledV2ValidationError::Failed(V2ValidationError)` variant contains at
+least 128 bytes on Windows. With `-D warnings`,
+`clippy::result_large_err` correctly failed the job. Windows Rust tests had
+already passed, so this is a platform-specific lint portability issue rather
+than a functional cancellation or validation failure.
+
+The P4 wrapper is crate-private, non-serialized, and carries the existing
+crate-private `V2ValidationError` by value. Local Linux debug-layout evidence
+measures both errors at 112 bytes. The previously certified Windows validator
+policy records `V2ValidationError` as exactly 128 bytes because of the Windows
+`PathBuf`-bearing `DatapackError` layout. The P4 implementation retained that
+Windows lint attribute on the new wrapper type instead of moving the
+function-scoped policy to the replacement result-returning function, so
+Clippy did not apply it at the reported boundary.
+
+The remediation moves the existing
+`#[cfg_attr(windows, allow(clippy::result_large_err))]` to only
+`validate_raw_zstd_chunked_payload_with_control`. This follows the certified
+pre-P4 precedent, avoids an otherwise unnecessary error-path heap allocation,
+and does not change the error representation, cancellation/validation
+semantics, public API, serialization, archive behavior, or global strict
+Clippy policy. A native Windows strict-Clippy rerun is **NOT RUN** after this
+remediation; hosted Windows CI remains the required evidence.
+
+Local remediation recertification is **CERTIFIED**: all 375 Rust tests, strict
+Linux Clippy, the binding gates, 12 source-SDK tests, the unchanged P2 wheel
+certifier, four isolated installed-wheel tests, both dependency-policy checks,
+both audit checks, crate packaging, and all four protected compatibility tests
+passed. The rebuilt Linux artifact remains
+`cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64`, passed the exact
+eight-member allowlist, and is 988,667 bytes with SHA-256
+`d60b3636423c9680a19c24f63ab333716416bb926086e0deb51022961752365a`.
+All six protected fixture sizes and SHA-256 values are unchanged. Native
+Windows strict Clippy is **NOT RUN** locally because this Linux/WSL environment
+has no Windows Rust target or native Windows toolchain installed.
 
 ## Preserved external technical-beta evidence
 

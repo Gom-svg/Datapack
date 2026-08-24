@@ -1162,9 +1162,6 @@ pub(crate) fn decode_raw_zstd_chunked_file_with_control(
 /// `archive_info` must come from `read_v2_archive_info_with_limits` on the same
 /// reader. Payload memory is then bounded to one declared compressed chunk plus
 /// its declared restored size at a time.
-// Windows PathBuf layout makes this crate-private typed error exactly 128 bytes.
-// Preserve its validation stage/source contract without an additional allocation.
-#[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) enum ControlledV2ValidationError {
     Cancelled,
     Failed(V2ValidationError),
@@ -1176,6 +1173,10 @@ impl From<V2ValidationError> for ControlledV2ValidationError {
     }
 }
 
+// Windows PathBuf layout makes the wrapped crate-private typed error exactly
+// 128 bytes. Preserve its validation stage/source contract without an
+// additional allocation, following the validator's pre-P4 policy.
+#[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) fn validate_raw_zstd_chunked_payload_with_control<R: Read + Seek>(
     input: &mut R,
     archive_info: &ChunkedArchiveInfo,
