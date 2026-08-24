@@ -170,17 +170,23 @@ output machinery.
 ## Interpreter concurrency and cancellation
 
 The adapter extracts owned arguments, then uses `Python::detach` around the
-complete Rust service operation and report serialization. It reattaches only
-to construct the returned Python objects. This permits other Python threads to
-make progress while Rust performs file I/O or CPU work.
+complete Rust service operation and report serialization. It reattaches for a
+configured synchronous progress callback and to construct returned Python
+objects. This permits other Python threads to make progress while Rust performs
+file I/O or CPU work between callbacks.
 
 Detaching from the interpreter is not cancellation. Cooperative cancellation
 is **deferred by design** because current codec operations do not promise
 bounded-latency interruption. The foundation exposes neither a cancellation
 token nor a misleading best-effort substitute.
 
-Progress callbacks are also not exposed in this phase. In particular, Python
-callbacks during Compare could contaminate measured timings.
+P3 exposes optional keyword-only callbacks receiving immutable
+`datapack.ProgressEvent` objects. The Rust Application layer supplies the
+operation, stage, state, byte/item counters, optional totals, percentage, and
+terminal-success fact. Python does not recalculate progress. A callback
+exception is reported through `sys.unraisablehook`, disables later callbacks
+for that operation, and does not cancel the Rust work. Python callbacks during
+Compare can add caller wall time; Compare therefore keeps coarse progress.
 
 ## Build and certification
 
@@ -218,7 +224,6 @@ This foundation does not implement:
 - compression or parsing logic in Python
 - pandas, Polars, Spark, or dataframe integration
 - async operations
-- progress callbacks
 - cancellation
 - Benchmark or Advisor bindings
 - public wheel publication

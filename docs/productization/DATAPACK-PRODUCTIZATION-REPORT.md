@@ -28,6 +28,7 @@ This report uses only these status labels:
 | Hosted final documentation CI | **CERTIFIED** | run `32683577404` |
 | Hosted P1 CI | **CERTIFIED** | run `32694107348` |
 | Hosted P2 distribution CI | **CERTIFIED** | run `32698666658` at technical checkpoint `cc128bb687b1cfbe64c6b6c7b912f31862176588` |
+| Hosted P2 final checkpoint CI | **CERTIFIED** | run `32699440785` at checkpoint `a433dbad5761a169681bdab64273938b86b291eb`; all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -40,8 +41,8 @@ This report uses only these status labels:
 | --- | --- | --- |
 | P0 — Productization Readiness Audit | **CERTIFIED** | `docs/productization/PRODUCTIZATION-READINESS-AUDIT.md` records the read-only baseline audit. Full local Rust certification and protected-fixture verification passed before the logical checkpoint commit. |
 | P1 — Release Foundation | **CERTIFIED** | Release/version, identity, compatibility, channel, platform, Python/MSRV, changelog/release-note, artifact, manifest, and checksum policies are implemented and locally certified. |
-| P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed hosted run `32698666658`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
-| P3 — Progress API | **DEFERRED** | Existing typed Rust foundation audited; no Productization change implemented. |
+| P2 — Python Distribution Foundation | **CERTIFIED** | Wheel-first `datapack-engine` packaging, manylinux2014 and Windows MSVC ABI3 artifacts, exact inspection, isolated installed-SDK testing, and build-once/test-six execution on both platforms passed technical run `32698666658` and final checkpoint run `32699440785`. Failed run `32697219488` and its Linux build-path remediation remain recorded below. Publication remains unauthorized. |
+| P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are locally certified. Hosted P3 evidence is **NOT RUN**. |
 | P4 — Cooperative Cancellation | **DEFERRED** | No public cancellation capability exists. |
 | P5 — Public API / Error Product Polish | **DEFERRED** | Existing surfaces audited; no Productization change implemented. |
 | P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
@@ -291,6 +292,11 @@ execution evidence. The same ABI3 wheel was reused across all six CPython
 versions on its platform. Run `32697219488` remains the historical failed run;
 it is not rewritten or counted as successful evidence.
 
+The documentation-closure checkpoint `a433dbad5761a169681bdab64273938b86b291eb`
+then passed final hosted run `32699440785`: all 18 required Rust, Python,
+dependency/package, Linux/Windows wheel, inspection/artifact, and CPython
+3.9–3.14 isolated-wheel jobs succeeded. This is the final P2 hosted baseline.
+
 ## P2 local certification
 
 | Gate | Status | Result |
@@ -346,6 +352,106 @@ No Rust source, Python API surface, codec, planner, archive, wire format,
 resource limit, protected fixture, fixture byte, or fixture SHA-256 value is
 changed. PyPI, TestPyPI, crates.io, GitHub Releases, and Git tags remain
 unmodified.
+
+## P3 progress API outcome
+
+P3 is **CERTIFIED** locally. It preserves the existing public
+`OperationKind`, `ProgressPhase`, `ProgressState`, `ProgressEvent`,
+`ProgressObserver`, and six silent/`*_with_progress` Application function pairs.
+The audit found a sound shared Rust foundation: Application I/O supplied
+rate-limited byte events, the v2 storage pipeline supplied caller-thread ordered
+chunk facts, legacy Benchmark supplied typed stage events, and the CLI already
+adapted Compress/Decompress events. Analyze, Validate, and Compare were coarse;
+Python had no observer surface.
+
+P3 evolves that contract additively:
+
+- `Analyzing` distinguishes bounded analysis from planning, while its completed
+  byte total is the sample scope rather than the complete source;
+- `Finalizing/Completed` is the only terminal-success fact and follows a
+  successful transactional commit where an output exists;
+- stable snake-case identifiers, Serde output adaptation, and a Rust
+  `percentage()` helper derive presentation from integer counters;
+- unknown totals remain `None`, completed values never exceed known totals, and
+  a zero-byte phase has no in-progress percentage;
+- core streaming I/O cadence is deterministic at 8 MiB rather than wall-clock
+  throttled;
+- v2 reports chunks and original bytes only when the ordered writer commits the
+  chunk to the transactional temporary stream, never merely when a worker
+  finishes;
+- Analyze, Validate, Compare, and in-memory v1 phases remain truthfully coarse
+  rather than manufacturing percentages; and
+- CLI human presentation is enabled only when stderr is a terminal, preserving
+  redirected and machine-readable output.
+
+The Python SDK now accepts optional keyword-only `progress` callbacks on
+Analyze, Compress, Decompress, Validate, and Compare. Callbacks receive a
+frozen `datapack.ProgressEvent` containing operation, stage, state, integer
+byte/item counters, optional totals, the Rust-derived percentage, and terminal
+success. Rust work detaches from Python; each callback reattaches safely on the
+operation's calling thread. A Python callback exception is explicitly isolated:
+it is sent to `sys.unraisablehook`, later callbacks for that operation are
+disabled, and the Rust operation continues. It is not implicit cancellation.
+
+Rust observers remain synchronous and infallible by type. A panic follows
+normal Rust unwinding. A focused test proves an observer panic at a v2 advanced
+event does not publish the transactional output; a panic at a post-commit
+terminal event cannot undo an already successful commit. P4 cancellation
+remains **DEFERRED** and no cancellation token, async runtime, or task runtime
+was added.
+
+The detailed contract, operation granularity, CLI/Python adapters, callback
+semantics, future IPC compatibility, and P4 boundary are documented in
+`docs/productization/PROGRESS_API.md`.
+
+### P3 progress audit answers
+
+| Audit question | Finding |
+| --- | --- |
+| Existing types | Public non-exhaustive `OperationKind`, `ProgressPhase`, `ProgressState`, `ProgressEvent`, and `ProgressObserver`; crate-private `ProgressEmitter`; crate-private v2 `ChunkedProgress`; legacy Benchmark typed events. |
+| Public progress entry points | All six Rust Application operations already had silent and observer-aware pairs. |
+| Existing emitters | Application wrappers and I/O, v2 ordered chunk storage callbacks, and legacy Benchmark phases. |
+| Coarse operations | Analyze, Validate, Compare, v1 in-memory transform stages, and some Benchmark stages. |
+| Truthful bytes/totals | File metadata, bounded analysis coverage, observed reads/writes, selected comparison scope, and v2 restored/original byte metadata. |
+| Truthful chunks | V2 only; chunk totals come from its actual chunk table/plan. V1 receives no fabricated chunk unit. |
+| Safe event boundaries | Bounded reads/writes, ordered v2 temporary-stream writes, coarse bulk-call boundaries, and post-commit result completion. |
+| CLI relationship | Compress/Decompress already consumed Application events; P3 adds Analyze/Validate/Compare and terminal-only stderr presentation while preserving Benchmark's existing typed-event adapter. |
+| Compatibility | The existing progress model was already public. P3 preserves its types/functions and adds enum variants, helpers, serialization, adapters, and events under their non-exhaustive contract. |
+
+### P3 performance observation
+
+One local uncontrolled debug-profile observation used a deterministic 4 MiB
+input, 256 KiB v2 chunks, one worker, and max two in flight. Silent compression
+took 214.150996 ms; compression with a lightweight collecting observer took
+209.013616 ms and delivered exactly 20 events (16 ordered chunk advances, phase
+start/completion, and terminal start/completion). Both archives were
+byte-for-byte identical. This WSL/NTFS-path timing is **OBSERVATIONAL**, has no
+CI threshold, and does not claim that callbacks improve performance.
+
+### P3 local certification
+
+| Gate | Status | Result |
+| --- | --- | --- |
+| `cargo fmt --all -- --check` | **CERTIFIED** | PASS |
+| `cargo check --locked` | **CERTIFIED** | PASS |
+| `cargo test --locked` | **CERTIFIED** | PASS — 363 tests, zero failures |
+| Strict locked Clippy | **CERTIFIED** | PASS |
+| `cargo build --release --locked` | **CERTIFIED** | PASS |
+| Binding format/check/test/Clippy/release build | **CERTIFIED** | PASS — eight SDK tests, zero failures; binding crate has zero Rust unit tests |
+| Python 3.9 syntax, Ruff lint, and Ruff formatting | **CERTIFIED** | PASS |
+| Linux ABI3 wheel build and exact P2 certification | **CERTIFIED** | PASS — unchanged `cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64` policy and eight-member allowlist; 978,898 bytes; SHA-256 `51d414c5caea6340c7199a84507d3534dfc70df96dbc57b42009547835593ef0` |
+| Isolated installed-wheel SDK | **CERTIFIED** | PASS — three tests, zero failures, including a structured native progress callback |
+| `cargo deny` core and binding | **CERTIFIED** | PASS with the existing non-failing unmatched-license and duplicate-version warnings |
+| `cargo audit` core and binding | **CERTIFIED** | PASS with only allowed `RUSTSEC-2025-0141` |
+| `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS |
+| Protected fixtures, sizes, and SHA-256 | **CERTIFIED** | PASS — four compatibility tests and all six immutable values unchanged |
+| Progress-disabled/enabled archive equality | **CERTIFIED** | PASS — byte-for-byte identical v2 artifacts |
+| Windows and CPython 3.9–3.14 hosted P3 regression | **NOT RUN** | Requires the post-P3 hosted workflow; P2 final run `32699440785` remains the last hosted certification. |
+| `git diff --check` | **CERTIFIED** | PASS |
+
+No `.dpack` v1/v2 semantics, protected fixtures, planner decisions, codec
+behavior, Application operation results, Python identity, ABI floor, platform
+policy, dependency, CI workflow, or release/publication state changed in P3.
 
 ## Preserved external technical-beta evidence
 

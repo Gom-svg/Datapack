@@ -33,7 +33,7 @@ const DEFAULT_SAMPLE_MB: u64 = 64;
 const DEFAULT_MAX_DICTIONARY_VALUES: u64 = 65_535;
 const DEFAULT_MAX_DICTIONARY_MB: u64 = 64;
 const IO_BUFFER_BYTES: usize = 256 * 1024;
-const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
+const PROGRESS_INTERVAL_BYTES: u64 = 8 * 1024 * 1024;
 
 fn warn_for_large_full_benchmark(
     source_size: u64,
@@ -529,7 +529,7 @@ struct BenchmarkProgressReporter<'a> {
     total_bytes: Option<u64>,
     processed_bytes: u64,
     started: Instant,
-    last_report: Instant,
+    last_reported_bytes: u64,
     events: &'a mut dyn FnMut(BenchmarkEvent),
 }
 
@@ -544,16 +544,20 @@ impl<'a> BenchmarkProgressReporter<'a> {
             total_bytes,
             processed_bytes: 0,
             started: Instant::now(),
-            last_report: Instant::now(),
+            last_reported_bytes: 0,
             events,
         }
     }
 
     fn add_bytes(&mut self, bytes: u64) {
         self.processed_bytes = self.processed_bytes.saturating_add(bytes);
-        if self.last_report.elapsed() >= PROGRESS_INTERVAL {
+        if self
+            .processed_bytes
+            .saturating_sub(self.last_reported_bytes)
+            >= PROGRESS_INTERVAL_BYTES
+        {
             self.report(BenchmarkEventState::Advanced);
-            self.last_report = Instant::now();
+            self.last_reported_bytes = self.processed_bytes;
         }
     }
 

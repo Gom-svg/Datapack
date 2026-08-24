@@ -1,14 +1,13 @@
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use crate::error::Result;
 
 use super::progress::{ProgressEmitter, ProgressPhase, ProgressState};
 
 pub(crate) const IO_BUFFER_BYTES: usize = 256 * 1024;
-const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
+const PROGRESS_INTERVAL_BYTES: u64 = 8 * 1024 * 1024;
 
 pub(crate) fn read_all(
     path: &Path,
@@ -62,7 +61,7 @@ struct ProgressCounter {
     phase: ProgressPhase,
     total_bytes: Option<u64>,
     completed_bytes: u64,
-    last_report: Instant,
+    last_reported_bytes: u64,
 }
 
 impl ProgressCounter {
@@ -76,13 +75,17 @@ impl ProgressCounter {
             phase,
             total_bytes,
             completed_bytes: 0,
-            last_report: Instant::now(),
+            last_reported_bytes: 0,
         }
     }
 
     fn advance(&mut self, bytes: u64, emitter: &mut ProgressEmitter<'_>) {
         self.completed_bytes = self.completed_bytes.saturating_add(bytes);
-        if self.last_report.elapsed() >= PROGRESS_INTERVAL {
+        if self
+            .completed_bytes
+            .saturating_sub(self.last_reported_bytes)
+            >= PROGRESS_INTERVAL_BYTES
+        {
             emitter.emit(
                 self.phase,
                 ProgressState::Advanced,
@@ -91,7 +94,7 @@ impl ProgressCounter {
                 0,
                 None,
             );
-            self.last_report = Instant::now();
+            self.last_reported_bytes = self.completed_bytes;
         }
     }
 

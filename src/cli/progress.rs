@@ -1,14 +1,17 @@
+use std::io::IsTerminal;
 use std::time::Instant;
 
 use crate::application::{ProgressEvent, ProgressObserver, ProgressPhase, ProgressState};
 
 pub(super) struct TerminalProgressObserver {
+    enabled: bool,
     started: Vec<(ProgressPhase, Instant)>,
 }
 
 impl TerminalProgressObserver {
     pub(super) fn new() -> Self {
         Self {
+            enabled: std::io::stderr().is_terminal(),
             started: Vec::new(),
         }
     }
@@ -16,6 +19,13 @@ impl TerminalProgressObserver {
 
 impl ProgressObserver for TerminalProgressObserver {
     fn on_event(&mut self, event: &ProgressEvent) {
+        if !self.enabled {
+            return;
+        }
+        if event.is_terminal_success() {
+            eprintln!("operation={} status=completed", event.operation.as_str());
+            return;
+        }
         match event.state {
             ProgressState::Started => {
                 if let Some((_, started)) = self
@@ -47,6 +57,7 @@ impl ProgressObserver for TerminalProgressObserver {
 
 fn progress_phase_label(phase: ProgressPhase) -> &'static str {
     match phase {
+        ProgressPhase::Analyzing => "analyze sample",
         ProgressPhase::Planning => "planning",
         ProgressPhase::ReadingInput => "read input",
         ProgressPhase::Hashing => "hash",
@@ -59,6 +70,7 @@ fn progress_phase_label(phase: ProgressPhase) -> &'static str {
         ProgressPhase::Comparing => "compare",
         ProgressPhase::Benchmarking => "benchmark",
         ProgressPhase::CleaningUp => "cleanup",
+        ProgressPhase::Finalizing => "finalize",
     }
 }
 

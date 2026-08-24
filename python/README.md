@@ -59,6 +59,25 @@ restored_facts = datapack.decompress(archive, restored)
 comparison = datapack.compare(source, mode="quick", runs=3)
 ```
 
+Each call also accepts an optional keyword-only structured progress callback:
+
+```python
+def on_progress(event: datapack.ProgressEvent) -> None:
+    if event.percentage is None:
+        print(event.operation, event.stage, event.completed_bytes)
+    else:
+        print(event.operation, event.stage, f"{event.percentage:.1f}%")
+
+datapack.compress(source, archive, progress=on_progress)
+```
+
+`ProgressEvent` is immutable. It exposes snake-case operation/stage/state,
+integer byte and item counters, optional totals, Rust-derived percentage, and
+a terminal-success flag. Unknown totals are `None`; DataPack never fabricates
+a percentage. A callback exception is reported through Python's unraisable
+exception hook, disables further callbacks for that operation, and does not
+cancel or otherwise alter the Rust operation.
+
 Each successful call returns the corresponding versioned Rust report as a
 plain Python dictionary. Both `str` and `os.PathLike` paths are accepted.
 Compression format is selected by an immutable `V1CompressionOptions` or
@@ -115,8 +134,9 @@ behavior from outside the repository. Its temporary environment deliberately
 has no Rust, Cargo, or maturin on `PATH`.
 
 Long-running Rust application calls detach from the Python interpreter, so
-other Python threads are not needlessly held while DataPack works. Result
-translation reattaches only after the Rust operation completes.
+other Python threads are not needlessly held while DataPack works. A progress
+callback safely reattaches for that synchronous callback and then detaches
+again. Result translation reattaches only after the Rust operation completes.
 
 ## Current scope and limitations
 
@@ -127,8 +147,9 @@ readiness or a public release.
 - There is no Python reimplementation of DataPack algorithms.
 - Cancellation is deliberately not exposed because the codecs do not yet
   provide bounded-latency cooperative cancellation.
-- Progress callbacks and the legacy Benchmark workflow are not exposed in this
-  first Python surface.
+- The legacy Benchmark workflow is not exposed in the Python surface. Analyze,
+  Validate, Compare, and several v1 transforms expose truthful coarse progress
+  rather than fabricated intermediate percentages.
 - Calls are synchronous. Applications may place them on their own worker
   threads; the extension releases interpreter ownership during Rust work.
 - Wheels are built from a complete DataPack repository checkout because this

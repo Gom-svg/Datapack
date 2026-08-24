@@ -55,7 +55,7 @@ fn run(
     }
 
     let output_existed = request.output.exists();
-    decompress_inner(&request, emitter).map_err(|error| {
+    let result = decompress_inner(&request, emitter).map_err(|error| {
         operation_failed(
             "decompression",
             &request.archive,
@@ -63,7 +63,9 @@ fn run(
             output_existed,
             error,
         )
-    })
+    })?;
+    emitter.succeeded();
+    Ok(result)
 }
 
 fn decompress_inner(
@@ -255,10 +257,12 @@ fn decompress_v2(
         &mut progress,
     )?;
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed(
+    emitter.completed_with_items(
         ProgressPhase::Decompressing,
         stats.original_size_bytes,
         Some(stats.original_size_bytes),
+        stats.chunk_count,
+        Some(stats.chunk_count),
     );
 
     Ok(DecompressionResultV1 {

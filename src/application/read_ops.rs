@@ -24,26 +24,38 @@ fn analyze_inner(
     emitter: &mut ProgressEmitter<'_>,
 ) -> Result<AnalysisReportV1> {
     let analysis = analyze_dataset(request, emitter)?;
-    crate::analysis::build_report_v1(&analysis)
+    let report = crate::analysis::build_report_v1(&analysis)?;
+    emitter.succeeded();
+    Ok(report)
 }
 
 fn analyze_dataset(
     request: AnalyzeRequest,
     emitter: &mut ProgressEmitter<'_>,
 ) -> Result<crate::analysis::DatasetAnalysis> {
-    emitter.started(ProgressPhase::Planning, None);
+    emitter.started(ProgressPhase::Analyzing, None);
     let analysis = crate::analysis::analyze_cli_path(&request.input, request.sample_mb)?;
+    let sample_budget = analysis
+        .facts
+        .coverage
+        .scope_size_bytes
+        .min(analysis.facts.coverage.max_bytes);
     emitter.completed(
-        ProgressPhase::Planning,
+        ProgressPhase::Analyzing,
         analysis.facts.coverage.bytes_analyzed,
-        Some(analysis.facts.source_size_bytes),
+        Some(sample_budget),
     );
     Ok(analysis)
 }
 
-pub(crate) fn analyze_for_cli(request: AnalyzeRequest) -> Result<crate::analysis::DatasetAnalysis> {
-    let mut emitter = ProgressEmitter::silent(OperationKind::Analyze);
-    analyze_dataset(request, &mut emitter)
+pub(crate) fn analyze_for_cli_with_progress(
+    request: AnalyzeRequest,
+    observer: &mut dyn ProgressObserver,
+) -> Result<crate::analysis::DatasetAnalysis> {
+    let mut emitter = ProgressEmitter::observed(OperationKind::Analyze, observer);
+    let analysis = analyze_dataset(request, &mut emitter)?;
+    emitter.succeeded();
+    Ok(analysis)
 }
 
 pub(super) fn validate(request: ValidateRequest) -> Result<ValidationReportV1> {
@@ -94,6 +106,7 @@ fn validate_inner(
         report.archive.archive_size_bytes,
         Some(report.archive.archive_size_bytes),
     );
+    emitter.succeeded();
     Ok(report)
 }
 
@@ -129,7 +142,8 @@ fn compare_inner(
     emitter.completed(
         ProgressPhase::Comparing,
         report.scope.compared_size_bytes,
-        Some(report.scope.source_size_bytes),
+        Some(report.scope.compared_size_bytes),
     );
+    emitter.succeeded();
     Ok(report)
 }

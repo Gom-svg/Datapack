@@ -74,7 +74,7 @@ fn compress_inner(
         overwrite,
         keep_partial,
     } = request;
-    match format {
+    let result = match format {
         CompressionFormat::V1(options) => compress_v1(
             &input,
             &output,
@@ -83,7 +83,7 @@ fn compress_inner(
             options,
             total_started,
             emitter,
-        ),
+        )?,
         CompressionFormat::V2(options) => compress_v2(
             &input,
             &output,
@@ -95,8 +95,10 @@ fn compress_inner(
             compression_backend(options.backend),
             total_started,
             emitter,
-        ),
-    }
+        )?,
+    };
+    emitter.succeeded();
+    Ok(result)
 }
 
 fn compress_v2(
@@ -108,7 +110,19 @@ fn compress_v2(
     emitter: &mut ProgressEmitter<'_>,
 ) -> Result<CompressionResultV1> {
     let input_size = std::fs::metadata(input)?.len();
-    emitter.started(ProgressPhase::Compressing, Some(input_size));
+    let chunk_size = u64::try_from(options.chunk_size_bytes).map_err(|_| {
+        DatapackError::InvalidFormat("chunk_size_bytes exceeds u64 capacity".to_string())
+    })?;
+    let total_chunks = if input_size == 0 {
+        0
+    } else {
+        input_size.div_ceil(chunk_size)
+    };
+    emitter.started_with_items(
+        ProgressPhase::Compressing,
+        Some(input_size),
+        Some(total_chunks),
+    );
     let transform_started = Instant::now();
     let (stats, cleanup_warning) = storage::chunked::encode_raw_zstd_chunked_file_with_progress(
         input,
@@ -135,7 +149,13 @@ fn compress_v2(
         },
     )?;
     let transform_elapsed = transform_started.elapsed();
-    emitter.completed(ProgressPhase::Compressing, input_size, Some(input_size));
+    emitter.completed_with_items(
+        ProgressPhase::Compressing,
+        input_size,
+        Some(input_size),
+        stats.chunk_count,
+        Some(stats.chunk_count),
+    );
 
     let mut diagnostics = Vec::new();
     if let Some(warning) = cleanup_warning {
@@ -207,7 +227,13 @@ fn compress_v1(
     emitter.completed(
         ProgressPhase::Planning,
         analysis.facts.coverage.bytes_analyzed,
-        Some(analysis.facts.coverage.source_size_bytes),
+        Some(
+            analysis
+                .facts
+                .coverage
+                .scope_size_bytes
+                .min(analysis.facts.coverage.max_bytes),
+        ),
     );
 
     if analysis.requires_raw_fallback() {

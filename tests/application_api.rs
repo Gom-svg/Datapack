@@ -1,5 +1,7 @@
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use datapack::application::{
     self, AgainstStatusV1, AnalyzeRequest, ArchiveFormatV1, ArchiveModeV1, BenchmarkRequest,
@@ -45,6 +47,18 @@ fn assert_progress_lifecycle(events: &[ProgressEvent], operation: OperationKind)
 
     let mut phases = Vec::new();
     for (index, event) in events.iter().enumerate() {
+        assert!(
+            event
+                .total_bytes
+                .is_none_or(|total| event.completed_bytes <= total),
+            "{operation:?} emitted bytes beyond its total: {event:?}"
+        );
+        assert!(
+            event
+                .total_items
+                .is_none_or(|total| event.completed_items <= total),
+            "{operation:?} emitted items beyond its total: {event:?}"
+        );
         if !phases.contains(&event.phase) {
             phases.push(event.phase);
         }
@@ -82,7 +96,25 @@ fn assert_progress_lifecycle(events: &[ProgressEvent], operation: OperationKind)
             starts, completions,
             "{operation:?} left {phase:?} lifecycle incomplete"
         );
+
+        let mut last_bytes = 0;
+        let mut last_items = 0;
+        for event in events.iter().filter(|event| event.phase == phase) {
+            if event.state == ProgressState::Started {
+                last_bytes = 0;
+                last_items = 0;
+            } else {
+                assert!(event.completed_bytes >= last_bytes);
+                assert!(event.completed_items >= last_items);
+                last_bytes = event.completed_bytes;
+                last_items = event.completed_items;
+            }
+        }
     }
+
+    assert!(events
+        .last()
+        .is_some_and(|event| event.is_terminal_success()));
 }
 
 fn partial_files(directory: &Path) -> Vec<PathBuf> {
@@ -517,19 +549,21 @@ fn typed_progress_is_ordered_and_contains_only_safe_facts() {
     application::analyze_with_progress(AnalyzeRequest::new(&input), &mut observer)
         .expect("analyze with typed progress");
 
-    assert!(events.len() >= 2);
+    assert!(events.len() >= 4);
     assert!(events
         .iter()
         .all(|event| event.operation == OperationKind::Analyze));
-    assert!(events
-        .iter()
-        .all(|event| event.phase == ProgressPhase::Planning));
+    assert!(events.iter().any(|event| {
+        event.phase == ProgressPhase::Analyzing && event.state == ProgressState::Completed
+    }));
     assert_eq!(events.first().unwrap().state, ProgressState::Started);
     assert_eq!(events.last().unwrap().state, ProgressState::Completed);
-    assert!(events.windows(2).all(|pair| {
-        pair[0].completed_bytes <= pair[1].completed_bytes
-            && pair[0].completed_items <= pair[1].completed_items
-    }));
+    assert!(events.last().unwrap().is_terminal_success());
+    assert_progress_lifecycle(&events, OperationKind::Analyze);
+    let serialized = serde_json::to_value(events.first().unwrap()).expect("serialize progress");
+    assert_eq!(serialized["operation"], "analyze");
+    assert_eq!(serialized["phase"], "analyzing");
+    assert_eq!(serialized["state"], "started");
     let transcript = format!("{events:?}");
     assert!(!transcript.contains(input.to_string_lossy().as_ref()));
     assert!(!transcript.contains(private_value));
@@ -616,15 +650,134 @@ fn every_public_operation_emits_balanced_typed_progress() {
             .map(|event| (event.phase, event.state)),
         Some((ProgressPhase::Benchmarking, ProgressState::Started))
     );
-    assert_eq!(
-        benchmark_events
-            .last()
-            .map(|event| (event.phase, event.state)),
-        Some((ProgressPhase::Benchmarking, ProgressState::Completed))
-    );
+    assert!(benchmark_events
+        .last()
+        .is_some_and(|event| event.is_terminal_success()));
     assert!(benchmark_events.iter().any(|event| {
         event.phase == ProgressPhase::Planning && event.state == ProgressState::Completed
     }));
+}
+
+#[test]
+fn progress_is_observational_and_v2_completion_tracks_committed_chunks() {
+    let directory = tempfile::tempdir().expect("progress equivalence directory");
+    let input = directory.path().join("input.bin");
+    let silent_archive = directory.path().join("silent.dpack");
+    let observed_archive = directory.path().join("observed.dpack");
+    let original = (0u8..=255)
+        .cycle()
+        .take(4 * 1024 * 1024)
+        .collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write progress equivalence input");
+
+    let mut silent_request = CompressRequest::new(&input, &silent_archive);
+    silent_request.format = CompressionFormat::V2(v2_options(256 * 1024));
+    let silent_started = Instant::now();
+    application::compress(silent_request).expect("compress without progress");
+    let silent_elapsed = silent_started.elapsed();
+
+    let mut observed_request = CompressRequest::new(&input, &observed_archive);
+    observed_request.format = CompressionFormat::V2(v2_options(256 * 1024));
+    let mut events = Vec::new();
+    let observed_started = Instant::now();
+    {
+        let mut observer = |event: &ProgressEvent| events.push(*event);
+        application::compress_with_progress(observed_request, &mut observer)
+            .expect("compress with no-op progress collection");
+    }
+    let observed_elapsed = observed_started.elapsed();
+
+    assert_eq!(
+        fs::read(&silent_archive).expect("read silent archive"),
+        fs::read(&observed_archive).expect("read observed archive")
+    );
+    assert_progress_lifecycle(&events, OperationKind::Compress);
+    let committed = events
+        .iter()
+        .rev()
+        .find(|event| event.phase == ProgressPhase::Compressing)
+        .expect("v2 compression completion");
+    assert_eq!(committed.state, ProgressState::Completed);
+    assert_eq!(committed.completed_bytes, original.len() as u64);
+    assert_eq!(committed.completed_items, committed.total_items.unwrap());
+    assert_eq!(committed.percentage(), Some(100.0));
+
+    eprintln!(
+        "OBSERVATIONAL progress overhead: disabled={silent_elapsed:?} enabled={observed_elapsed:?} events={}",
+        events.len()
+    );
+}
+
+#[test]
+fn failed_operation_never_emits_terminal_success() {
+    let directory = tempfile::tempdir().expect("failed progress directory");
+    let missing = directory.path().join("missing.csv");
+    let mut events = Vec::new();
+    let mut observer = |event: &ProgressEvent| events.push(*event);
+    assert!(
+        application::analyze_with_progress(AnalyzeRequest::new(missing), &mut observer).is_err()
+    );
+    assert!(!events.is_empty());
+    assert!(!events.iter().any(|event| event.is_terminal_success()));
+}
+
+#[test]
+fn empty_v2_progress_has_safe_zero_totals() {
+    let directory = tempfile::tempdir().expect("empty progress directory");
+    let input = directory.path().join("empty.bin");
+    let archive = directory.path().join("empty.dpack");
+    let restored = directory.path().join("empty-restored.bin");
+    fs::write(&input, []).expect("write empty input");
+
+    let mut request = CompressRequest::new(&input, &archive);
+    request.format = CompressionFormat::V2(v2_options(1_024));
+    let mut events = Vec::new();
+    {
+        let mut observer = |event: &ProgressEvent| events.push(*event);
+        application::compress_with_progress(request, &mut observer)
+            .expect("compress empty input with progress");
+    }
+    let phase_events = events
+        .iter()
+        .filter(|event| event.phase == ProgressPhase::Compressing)
+        .collect::<Vec<_>>();
+    assert_eq!(phase_events.len(), 2);
+    assert_eq!(phase_events[0].total_bytes, Some(0));
+    assert_eq!(phase_events[0].total_items, Some(0));
+    assert_eq!(phase_events[0].percentage(), None);
+    assert_eq!(phase_events[1].percentage(), Some(100.0));
+    assert_eq!(phase_events[1].completed_items, 0);
+    assert_progress_lifecycle(&events, OperationKind::Compress);
+
+    application::decompress(DecompressRequest::new(&archive, &restored))
+        .expect("decompress empty v2 archive");
+    assert!(fs::read(restored)
+        .expect("read empty restored output")
+        .is_empty());
+}
+
+#[test]
+fn panicking_rust_observer_unwinds_without_publishing_partial_output() {
+    let directory = tempfile::tempdir().expect("panicking observer directory");
+    let input = directory.path().join("input.bin");
+    let archive = directory.path().join("output.dpack");
+    let original = (0u8..=255).cycle().take(4_097).collect::<Vec<_>>();
+    fs::write(&input, &original).expect("write panicking observer input");
+    let mut request = CompressRequest::new(&input, &archive);
+    request.format = CompressionFormat::V2(v2_options(1_024));
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let mut observer = |event: &ProgressEvent| {
+            if event.state == ProgressState::Advanced {
+                panic!("intentional progress observer panic");
+            }
+        };
+        let _ = application::compress_with_progress(request, &mut observer);
+    }));
+
+    assert!(result.is_err());
+    assert!(!archive.exists());
+    assert_eq!(fs::read(input).expect("read source after panic"), original);
 }
 
 #[test]

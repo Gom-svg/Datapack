@@ -63,7 +63,7 @@ pub fn analyze_with_progress(
     read_ops::analyze_with_progress(request, observer)
 }
 
-pub(crate) use read_ops::analyze_for_cli;
+pub(crate) use read_ops::analyze_for_cli_with_progress;
 
 pub fn validate(request: ValidateRequest) -> crate::error::Result<ValidationReportV1> {
     read_ops::validate(request)

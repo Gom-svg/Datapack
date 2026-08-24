@@ -601,7 +601,11 @@ fn analyze_command(
     json: bool,
     pretty: bool,
 ) -> Result<()> {
-    let analysis = application::analyze_for_cli(application::AnalyzeRequest { input, sample_mb })?;
+    let mut observer = progress::TerminalProgressObserver::new();
+    let analysis = application::analyze_for_cli_with_progress(
+        application::AnalyzeRequest { input, sample_mb },
+        &mut observer,
+    )?;
     if json {
         analysis_json::print_analysis_v1(&analysis, pretty)
     } else {

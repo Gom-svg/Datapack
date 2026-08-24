@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::application::{self, CheckStatusV1, ValidateRequest, ValidationReportV1};
 use crate::error::{DatapackError, Result};
 
+use super::progress::TerminalProgressObserver;
 use super::validation::{
     megabytes_to_bytes, optional_megabytes_to_bytes, validate_nonzero_megabyte_limit,
 };
@@ -20,13 +21,15 @@ pub(super) fn run(archive: PathBuf, options: ValidateOptions) -> Result<()> {
         ));
     }
 
-    let report = application::validate(ValidateRequest {
+    let request = ValidateRequest {
         archive,
         against: options.against,
         max_output_bytes: optional_megabytes_to_bytes("--max-output-mb", options.max_output_mb)?,
         max_chunks: options.max_chunks,
         max_memory_bytes: megabytes_to_bytes("--max-memory-mb", options.max_memory_mb)?,
-    })?;
+    };
+    let mut observer = TerminalProgressObserver::new();
+    let report = application::validate_with_progress(request, &mut observer)?;
 
     if options.json {
         print_json(&report, options.pretty)?;

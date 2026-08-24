@@ -223,11 +223,23 @@ fn main() -> datapack::error::Result<()> {
 `ProgressState` values plus absolute byte/item counters. It never contains a
 path, row, field value, name, hash, diagnostic, or rendered message.
 
+Totals are optional and are never represented by a sentinel value. Item
+counters currently describe ordered v2 chunks when applicable. Use
+`ProgressEvent::percentage()` to derive a percentage from integer byte facts;
+unknown totals return `None`, and zero-byte work is handled without division by
+zero. Elapsed time, throughput, and ETA remain adapter/presentation concerns.
+
 Observers run synchronously on the operation's calling thread. Delivery
-cadence is unspecified, and a small or fast phase may have only lifecycle
-events. Benchmark emits an outer `Benchmarking` start/completion pair. Each
-reported inner phase receives `Started`, zero or more `Advanced` snapshots,
-and `Completed`; fast phases may omit `Advanced`.
+cadence is not a stable event-count promise, and a small phase may have only
+lifecycle events. Streaming I/O uses deterministic bounded byte milestones;
+v2 advances at ordered chunk-write milestones. Benchmark emits an outer
+`Benchmarking` lifecycle. Each reported inner phase receives `Started`, zero or
+more `Advanced` snapshots, and `Completed`; fast phases may omit `Advanced`.
+
+The terminal `Finalizing/Completed` event is emitted only for a successfully
+returned operation and, where applicable, only after transactional output
+commit. A failed operation never emits that terminal-success fact. Earlier
+phase completion does not claim that the complete operation succeeded.
 
 Observer callback time is caller wall time and can be included in operation
 duration. In particular, Benchmark progress callbacks may run while a measured
@@ -235,6 +247,13 @@ reader or writer is active and can perturb reported timing. Callers that need
 the least callback-contaminated Benchmark measurements should use the silent
 `benchmark()` entry point. Progress observation cannot cancel or otherwise
 alter the operation.
+
+An observer panic follows normal Rust unwinding. Transaction guards prevent a
+pre-commit observer panic from publishing a partial final output. Progress is
+not a cancellation or error-return channel.
+
+See `docs/productization/PROGRESS_API.md` for exact operation/phase identifiers,
+per-operation granularity, Python callback behavior, and the P4 boundary.
 
 ## Errors and outputs
 
@@ -266,9 +285,10 @@ same cleanup, transactional-commit, and Benchmark timing invariants.
 The separate Python SDK foundation is a thin consumer of this Rust API. It
 currently exposes Analyze, Compress, Decompress, Validate, and Compare and
 converts the existing Rust reports to Python dictionaries; it does not define
-a second engine or result schema. Benchmark, Advisor, progress callbacks, and
-cancellation are not part of that first Python surface. This note does not
-extend or change the normative Rust Application API V1 contract. See the
+a second engine or result schema. P3 adds optional structured progress
+callbacks to those five calls by adapting these exact Rust facts. Benchmark,
+Advisor, and cancellation are not part of the Python surface. This note does
+not extend or change the normative Rust Application API V1 contract. See the
 [Python SDK foundation](PYTHON_SDK_FOUNDATION.md).
 
 ## Compatibility

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use datapack::application::{
     self, AnalyzeRequest, CompareMode, CompareRequest, CompressRequest, CompressionBackend,
-    CompressionFormat, CompressionMode, DecompressRequest, V1CompressionOptions,
-    V2CompressionOptions, ValidateRequest,
+    CompressionFormat, CompressionMode, DecompressRequest, ProgressEvent, ProgressObserver,
+    V1CompressionOptions, V2CompressionOptions, ValidateRequest,
 };
 use datapack::error::DatapackError as RustDataPackError;
 use pyo3::create_exception;
@@ -62,6 +62,75 @@ create_exception!(
     DataPackError,
     "A Rust application report could not be translated to Python."
 );
+
+/// Immutable Python adaptation of the Rust application progress facts.
+#[pyclass(name = "ProgressEvent", module = "datapack", frozen)]
+struct PyProgressEvent {
+    #[pyo3(get)]
+    operation: &'static str,
+    #[pyo3(get)]
+    stage: &'static str,
+    #[pyo3(get)]
+    state: &'static str,
+    #[pyo3(get)]
+    completed_bytes: u64,
+    #[pyo3(get)]
+    total_bytes: Option<u64>,
+    #[pyo3(get)]
+    completed_items: u64,
+    #[pyo3(get)]
+    total_items: Option<u64>,
+    #[pyo3(get)]
+    percentage: Option<f64>,
+    #[pyo3(get)]
+    terminal: bool,
+}
+
+impl From<&ProgressEvent> for PyProgressEvent {
+    fn from(event: &ProgressEvent) -> Self {
+        Self {
+            operation: event.operation.as_str(),
+            stage: event.phase.as_str(),
+            state: event.state.as_str(),
+            completed_bytes: event.completed_bytes,
+            total_bytes: event.total_bytes,
+            completed_items: event.completed_items,
+            total_items: event.total_items,
+            percentage: event.percentage(),
+            terminal: event.is_terminal_success(),
+        }
+    }
+}
+
+struct PythonProgressObserver {
+    callback: Py<PyAny>,
+    callback_failed: bool,
+}
+
+impl PythonProgressObserver {
+    fn new(callback: Py<PyAny>) -> Self {
+        Self {
+            callback,
+            callback_failed: false,
+        }
+    }
+}
+
+impl ProgressObserver for PythonProgressObserver {
+    fn on_event(&mut self, event: &ProgressEvent) {
+        if self.callback_failed {
+            return;
+        }
+        Python::attach(|py| {
+            let result = Py::new(py, PyProgressEvent::from(event))
+                .and_then(|event| self.callback.call1(py, (event,)));
+            if let Err(error) = result {
+                self.callback_failed = true;
+                error.write_unraisable(py, Some(self.callback.bind(py)));
+            }
+        });
+    }
+}
 
 #[pyclass(
     name = "V1CompressionOptions",
@@ -193,15 +262,35 @@ impl PyV2CompressionOptions {
 }
 
 #[pyfunction]
-#[pyo3(signature = (input, *, sample_mb = 64))]
-fn analyze(py: Python<'_>, input: PathBuf, sample_mb: u64) -> PyResult<Py<PyAny>> {
+#[pyo3(signature = (input, *, sample_mb = 64, progress = None))]
+fn analyze(
+    py: Python<'_>,
+    input: PathBuf,
+    sample_mb: u64,
+    progress: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let mut request = AnalyzeRequest::new(input);
     request.sample_mb = sample_mb;
-    service_report(py, "analyze", move || application::analyze(request))
+    let progress_request = request.clone();
+    service_report_with_optional_progress(
+        py,
+        "analyze",
+        progress,
+        move || application::analyze(request),
+        move |observer| application::analyze_with_progress(progress_request, observer),
+    )
 }
 
 #[pyfunction]
-#[pyo3(signature = (input, output, *, options = None, overwrite = false, keep_partial = false))]
+#[pyo3(signature = (
+    input,
+    output,
+    *,
+    options = None,
+    overwrite = false,
+    keep_partial = false,
+    progress = None
+))]
 fn compress(
     py: Python<'_>,
     input: PathBuf,
@@ -209,12 +298,20 @@ fn compress(
     options: Option<&Bound<'_, PyAny>>,
     overwrite: bool,
     keep_partial: bool,
+    progress: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = CompressRequest::new(input, output);
     request.format = compression_format(options)?;
     request.overwrite = overwrite;
     request.keep_partial = keep_partial;
-    service_report(py, "compress", move || application::compress(request))
+    let progress_request = request.clone();
+    service_report_with_optional_progress(
+        py,
+        "compress",
+        progress,
+        move || application::compress(request),
+        move |observer| application::compress_with_progress(progress_request, observer),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -228,7 +325,8 @@ fn compress(
     max_chunks = None,
     max_memory_bytes = None,
     overwrite = false,
-    keep_partial = false
+    keep_partial = false,
+    progress = None
 ))]
 fn decompress(
     py: Python<'_>,
@@ -240,6 +338,7 @@ fn decompress(
     max_memory_bytes: Option<u64>,
     overwrite: bool,
     keep_partial: bool,
+    progress: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = DecompressRequest::new(archive, output);
     request.verify = verify;
@@ -248,7 +347,14 @@ fn decompress(
     request.max_memory_bytes = max_memory_bytes;
     request.overwrite = overwrite;
     request.keep_partial = keep_partial;
-    service_report(py, "decompress", move || application::decompress(request))
+    let progress_request = request.clone();
+    service_report_with_optional_progress(
+        py,
+        "decompress",
+        progress,
+        move || application::decompress(request),
+        move |observer| application::decompress_with_progress(progress_request, observer),
+    )
 }
 
 #[pyfunction]
@@ -258,7 +364,8 @@ fn decompress(
     against = None,
     max_output_bytes = None,
     max_chunks = None,
-    max_memory_bytes = None
+    max_memory_bytes = None,
+    progress = None
 ))]
 fn validate(
     py: Python<'_>,
@@ -267,6 +374,7 @@ fn validate(
     max_output_bytes: Option<u64>,
     max_chunks: Option<u64>,
     max_memory_bytes: Option<u64>,
+    progress: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = ValidateRequest::new(archive);
     request.against = against;
@@ -275,23 +383,45 @@ fn validate(
     if let Some(value) = max_memory_bytes {
         request.max_memory_bytes = value;
     }
-    service_report(py, "validate", move || application::validate(request))
+    let progress_request = request.clone();
+    service_report_with_optional_progress(
+        py,
+        "validate",
+        progress,
+        move || application::validate(request),
+        move |observer| application::validate_with_progress(progress_request, observer),
+    )
 }
 
 #[pyfunction]
-#[pyo3(signature = (input, *, mode = "quick", runs = 3, max_input_mb = None))]
+#[pyo3(signature = (
+    input,
+    *,
+    mode = "quick",
+    runs = 3,
+    max_input_mb = None,
+    progress = None
+))]
 fn compare(
     py: Python<'_>,
     input: PathBuf,
     mode: &str,
     runs: usize,
     max_input_mb: Option<u64>,
+    progress: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut request = CompareRequest::new(input);
     request.mode = parse_compare_mode(mode)?;
     request.runs = runs;
     request.max_input_mb = max_input_mb;
-    service_report(py, "compare", move || application::compare(request))
+    let progress_request = request.clone();
+    service_report_with_optional_progress(
+        py,
+        "compare",
+        progress,
+        move || application::compare(request),
+        move |observer| application::compare_with_progress(progress_request, observer),
+    )
 }
 
 fn compression_format(options: Option<&Bound<'_, PyAny>>) -> PyResult<CompressionFormat> {
@@ -316,6 +446,40 @@ where
 {
     let serialized = py.detach(move || {
         let report = service().map_err(|error| service_failure(operation, error))?;
+        serde_json::to_string(&report).map_err(|error| ServiceFailure {
+            kind: PythonErrorKind::Translation,
+            message: format!("{operation} result translation failed: {error}"),
+        })
+    });
+    let serialized = serialized.map_err(ServiceFailure::into_pyerr)?;
+    json_report(py, &serialized, operation)
+}
+
+fn service_report_with_optional_progress<T, F, P>(
+    py: Python<'_>,
+    operation: &'static str,
+    progress: Option<Py<PyAny>>,
+    service: F,
+    service_with_progress: P,
+) -> PyResult<Py<PyAny>>
+where
+    T: Serialize,
+    F: FnOnce() -> datapack::error::Result<T> + Send + 'static,
+    P: FnOnce(&mut dyn ProgressObserver) -> datapack::error::Result<T> + Send + 'static,
+{
+    let Some(callback) = progress else {
+        return service_report(py, operation, service);
+    };
+    if !callback.bind(py).is_callable() {
+        return Err(DataPackConfigurationError::new_err(format!(
+            "{operation} request rejected: progress must be callable"
+        )));
+    }
+
+    let serialized = py.detach(move || {
+        let mut observer = PythonProgressObserver::new(callback);
+        let report = service_with_progress(&mut observer)
+            .map_err(|error| service_failure(operation, error))?;
         serde_json::to_string(&report).map_err(|error| ServiceFailure {
             kind: PythonErrorKind::Translation,
             message: format!("{operation} result translation failed: {error}"),
@@ -444,6 +608,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_class::<PyV1CompressionOptions>()?;
     module.add_class::<PyV2CompressionOptions>()?;
+    module.add_class::<PyProgressEvent>()?;
     module.add_function(wrap_pyfunction!(analyze, module)?)?;
     module.add_function(wrap_pyfunction!(compress, module)?)?;
     module.add_function(wrap_pyfunction!(decompress, module)?)?;

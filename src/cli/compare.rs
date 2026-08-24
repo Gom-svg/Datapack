@@ -2,8 +2,11 @@ use crate::application::{self, CompareRequest, ComparisonReportV1, CompetitorRep
 use crate::error::{DatapackError, Result};
 use std::fmt::Write as _;
 
+use super::progress::TerminalProgressObserver;
+
 pub(super) fn run(request: CompareRequest, json: bool, pretty: bool) -> Result<()> {
-    let report = application::compare(request)?;
+    let mut observer = TerminalProgressObserver::new();
+    let report = application::compare_with_progress(request, &mut observer)?;
     if json {
         print_json(&report, pretty)
     } else {

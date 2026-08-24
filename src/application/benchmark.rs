@@ -72,6 +72,7 @@ fn run(request: BenchmarkRequest, emitter: &mut ProgressEmitter<'_>) -> Result<B
         report.measured_input_size_bytes,
         Some(report.source_size_bytes),
     );
+    emitter.succeeded();
     Ok(report)
 }
 

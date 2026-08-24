@@ -238,11 +238,12 @@ Advisor is not one of the six public services. See the
 The Python SDK foundation is a thin PyO3 consumer of that Rust API, not a
 Python reimplementation of DataPack. It exposes synchronous path-based
 `analyze`, `compress`, `decompress`, `validate`, and `compare` functions and
-returns the Rust reports as Python dictionaries with typed exceptions.
-Benchmark, Advisor, progress callbacks, and cancellation are not exposed in
-this first Python surface. It has no required pandas, Polars, or Spark
-dependency and is a foundation rather than a production-packaging claim. See
-the [Python SDK foundation](docs/reference/PYTHON_SDK_FOUNDATION.md) and
+returns the Rust reports as Python dictionaries with typed exceptions. Each
+call accepts an optional structured `ProgressEvent` callback adapted directly
+from Rust facts. Benchmark, Advisor, and cancellation are not exposed in the
+Python surface. It has no required pandas, Polars, or Spark dependency. See the
+[Python SDK foundation](docs/reference/PYTHON_SDK_FOUNDATION.md),
+[Progress API](docs/productization/PROGRESS_API.md), and
 [Python build instructions](python/README.md).
 
 ## Experimental Hardware Tuning
@@ -386,17 +387,18 @@ caveat applies to Tune and direct compression/decompression profiles.
 
 `compress --profile`, `decompress --profile`, `benchmark --profile`, and `tune --profile` emit diagnostics to stderr. Stable summary fields include the operation, archive version, selected mode/backend, input and output sizes, ratio where relevant, chunk count and size, worker and in-flight limits, verification state, elapsed time, and throughput. Pipeline and per-chunk timing fields are reported where available rather than inferred from overlapping stages.
 
-V2 progress distinguishes:
+V2's internal pipeline distinguishes read, worker, and ordered-writer work.
+The product progress contract deliberately reports the ordered-writer
+milestone:
 
-- chunks read
-- chunks compressed
-- chunks written
-- total chunks and in-flight work
-- MiB read and committed
-- percent, elapsed time, ETA, and throughput
-- per-chunk zstd level when profiling is enabled
+- original bytes represented by chunks written in order;
+- chunks written and total chunks; and
+- final operation success only after transactional commit.
 
-Compressed progress is not presented as written progress: the ordered writer may still be waiting for an earlier chunk.
+Worker completion is not presented as product completion: the ordered writer
+may still be waiting for an earlier chunk. Percentage derives from integer
+completed/total counters. Elapsed time, ETA, and throughput remain CLI
+presentation facts, not core progress fields.
 
 ## Recommended Large-File Workflow
 

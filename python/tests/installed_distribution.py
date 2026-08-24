@@ -103,6 +103,7 @@ class InstalledDistributionTests(unittest.TestCase):
 
     def test_v2_installed_roundtrip_uses_native_engine(self) -> None:
         archive = self.directory / "source-v2.dpack"
+        progress_events = []
         compression = datapack.compress(
             self.source,
             archive,
@@ -111,8 +112,15 @@ class InstalledDistributionTests(unittest.TestCase):
                 threads=1,
                 max_in_flight_chunks=1,
             ),
+            progress=progress_events.append,
         )
         self.assertEqual(compression["archive_version"], 2)
+        self.assertTrue(progress_events)
+        self.assertTrue(
+            all(isinstance(event, datapack.ProgressEvent) for event in progress_events)
+        )
+        self.assertEqual(progress_events[-1].operation, "compress")
+        self.assertTrue(progress_events[-1].terminal)
 
         validation = datapack.validate(archive, against=self.source)
         self.assertTrue(validation["valid"])
