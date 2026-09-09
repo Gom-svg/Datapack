@@ -154,17 +154,31 @@ are bit-for-bit reproducible.
 3. require the exact runtime-content allowlist and reject unexpected tests,
    fixtures, caches, build output, SBOMs, entry points, unsafe paths, common
    secret markers, and developer-specific absolute paths;
-4. copy only the final wheel and installed-test harness to an operating-system
-   temporary directory outside the repository;
+4. copy only the final wheel, installed-test harness, and Technical Beta II CI
+   harness to an operating-system temporary directory outside the repository;
 5. create a fresh virtual environment with the selected matrix interpreter;
 6. remove `PYTHONPATH`, `PYTHONHOME`, Cargo, and rustup environment influence;
 7. restrict `PATH` so Rust, Cargo, and maturin are unavailable;
 8. install with `pip --no-index --no-deps`;
-9. run the copied test under Python isolated mode from the temporary directory;
+9. run both copied tests under Python isolated mode from the temporary directory;
 10. prove `datapack` and its native module resolve inside the temporary virtual
-    environment and no repository path occurs in `sys.path`; and
-11. execute analyze, v1/v2 compress, validate, decompress, and compare over a
-    deterministic dataset, including independent byte and SHA-256 checks.
+    environment and no repository path occurs in `sys.path`;
+11. execute the installed public-SDK smoke cases; and
+12. execute the Technical Beta II CI profile across deterministic structured
+    workloads, format fidelity, edge behavior, cancellation/retry, resource
+    limits, corruption, and Compare, including independent byte and SHA-256
+    checks.
+
+The Technical Beta II harness is a certification input, not a wheel member.
+The exact runtime-content allowlist remains unchanged. See
+`TECHNICAL_BETA_II.md` for its evidence and scope boundaries.
+
+P6 local certification rebuilt the Linux manylinux2014 `cp39-abi3` wheel with
+maturin 1.14.1 and passed this complete isolated gate on CPython 3.14.4,
+including all five installed-distribution tests and the P6 CI profile. The
+full manual-beta profile, 15 SDK tests, and installed stub/runtime signature
+checks also passed against that current wheel. P6 hosted certification remains
+**PENDING / NOT RUN**; the P2 hosted evidence below is historical.
 
 ## 7. Hosted CI
 

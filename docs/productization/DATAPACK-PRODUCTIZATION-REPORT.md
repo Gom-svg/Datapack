@@ -35,6 +35,7 @@ This report uses only these status labels:
 | Certified pre-P5 checkpoint | **CERTIFIED** | `bc08ed570a21a32cd72a9c494e710dbe6ed09109` on `productization/foundation`, `origin/productization/foundation`, `main`, and `origin/main` |
 | Hosted pre-P5 branch CI | **CERTIFIED** | `productization/foundation` run `32712910071` and `main` run `32713671052`; both SUCCESS |
 | Hosted P5 API/error CI | **CERTIFIED** | run `32716713250` at technical checkpoint `5bed871036621911863d26b67e27a54019370104`; all 18 required jobs passed |
+| P6 starting checkpoint | **CERTIFIED** | clean post-P5 checkpoint `ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5` on `productization/foundation` |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -51,7 +52,7 @@ This report uses only these status labels:
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
-| P6 — Technical Beta II | **DEFERRED** | No Productization beta-II methodology or run implemented. |
+| P6 — Technical Beta II | **IMPLEMENTED** | Local implementation and certification complete: Rust/Python, current installed-wheel CI/manual beta, release CLI, security/package, and protected compatibility gates passed. Supplemental real-world 16 GiB evidence verified. Hosted certification is pending (**NOT RUN**); P6 is not formally closed. See `TECHNICAL_BETA_II.md`. |
 | P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
 
@@ -797,7 +798,8 @@ unsafe code, network action, telemetry, async runtime, format, planner rule, or
 execution engine. Error helpers are constant matches used only when callers or
 the CLI request identity. Future Desktop/IPC remains **DEFERRED**, while typed
 categories, stable identifiers, and versioned reports are adapter-friendly.
-P6 has not started.
+P6 is separate additive certification work and does not alter the P5 contracts
+described above.
 
 ### P5 local certification
 
@@ -842,11 +844,132 @@ required hosted jobs passed:
 This hosted evidence confirms that P5 preserves the certified Rust, Python,
 progress, cancellation, dependency, packaging, wheel-hygiene, and cross-
 platform distribution contracts. It does not establish production readiness
-or authorize publication. P6 remains **DEFERRED** and has not started.
+or authorize publication. P6 subsequently adds operational certification
+coverage without changing the P5 contract.
 
 P5 PyPI, TestPyPI, crates.io, GitHub Release, tag, merge, registry-credential,
 and public-release actions remain **NOT RUN**. DataPack is not claimed
 production-ready and has no external security audit.
+
+## P6 Technical Beta II outcome
+
+P6 is **IMPLEMENTED** as additive certification infrastructure. It starts from
+clean post-P5 checkpoint
+`ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5` and does not modify engine, codec,
+planner, archive, Rust API, Python ABI, dependency, or workflow-topology code.
+
+`scripts/technical_beta_ii.py` runs through an installed `datapack-engine`
+wheel. A specified SplitMix64 generator creates five deterministic workload
+families with frozen CI row counts, seeds, byte sizes, SHA-256 values, and
+expected planner modes. It then exercises:
+
+- analyze, v1 planner-selected compression, forced v2 chunked RawZstd,
+  validation against source, physical decompression, SHA-256, and independent
+  byte equality;
+- CSV, TSV, PSV, semicolon-delimited data, LF/CRLF, final-newline presence,
+  quoting/escaping, Unicode, whitespace, numeric-text fidelity, empty/trailing
+  fields, and long text;
+- expected structured-analysis rejection followed by safe raw preservation for
+  unsupported or malformed cases;
+- early/mid/late compression cancellation, compression and decompression
+  `keep_partial`, retry, false-terminal-event prevention, destination sentinel
+  preservation, and overwrite behavior;
+- compression admission, validation/decompression limits, source mismatch,
+  corruption, and missing-archive behavior;
+- Compare Quick/Full correctness, cancellation, and operational failure; and
+- optional release-CLI identity/help, JSON stream cleanliness, stable error
+  rendering, exit behavior, archive lifecycle, and exact restoration.
+
+`scripts/certify_python_wheel.py` copies that harness into the existing
+isolated wheel workspace and runs its CI profile after the installed public-SDK
+tests. It remains outside the wheel, so the exact eight-member runtime allowlist
+is unchanged. The existing Linux/Windows × CPython 3.9-3.14 wheel matrix will
+execute P6 in all 12 isolated jobs without adding a workflow or publication
+path.
+
+### P6 final local evidence
+
+P6 local implementation and certification are complete; hosted certification is pending.
+The final executable tree passed certification in WSL on 2026-09-08. The
+2026-09-09 continuation recovered the retained logs and confirmed that
+`cargo package --locked --allow-dirty` had completed with exit status 0 before
+the interruption. Completed gates were reused; the remaining changes finalize
+documentation.
+
+The recovered 1,358-line harness was formatted with the prior Ruff 0.12.12
+baseline to 1,604 lines and verified AST-identical. Both CI and the full manual
+beta ran after that final edit. The manual run included the 4,097-column and
+8 MiB-plus-one-byte record probes, 249 forced-v2 ETL chunks, and a retained
+65,536-byte decompression partial. No product behavior changed.
+
+| Gate | Status | Result |
+| --- | --- | --- |
+| Core Rust formatting/check/test/strict Clippy/release | **CERTIFIED** | PASS — Rust/Cargo 1.85.0; 382 tests, zero failures; locked commands and global `-D warnings` unchanged |
+| Binding format/check/test-build/strict Clippy/release | **CERTIFIED** | PASS — zero binding Rust unit tests; release compilation included in current wheel build |
+| Python source/version/grammar/lint/format/typing | **CERTIFIED** | PASS — `0.1.0`, `datapack-engine`, `datapack`; Python 3.9 grammar; Ruff 0.12.12; installed stub/runtime signatures and PEP 561 marker |
+| SDK suite | **CERTIFIED** | PASS — 15 tests against the current installed wheel |
+| Current Linux ABI3 wheel and isolated install | **CERTIFIED** | PASS — maturin 1.14.1, manylinux2014 auditwheel check, exact eight-member allowlist; five isolated tests on CPython 3.14.4 with source and Rust/Cargo/maturin absent at runtime |
+| P6 CI profile from installed current ABI3 wheel | **CERTIFIED** | PASS — all frozen sizes, SHA-256 values, planner expectations, workload/format/edge/operational/resource/Compare cases |
+| P6 full manual-beta profile | **CERTIFIED** | PASS — final harness revision, including beta-only hard-limit probes |
+| Release CLI sequence | **CERTIFIED** | PASS — shared WSL release cache; exact roundtrip, JSON/stdout/stderr, stable errors and established exit behavior |
+| `cargo deny` core/binding | **CERTIFIED** | PASS — existing unmatched-license and duplicate-`syn` warnings only |
+| `cargo audit` 0.22.1 core/binding | **CERTIFIED** | PASS — only accepted `RUSTSEC-2025-0141` |
+| `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 168 files; verification build completed, exit 0 |
+| Protected V1/V2 compatibility | **CERTIFIED** | PASS — four tests and all six frozen sizes/SHA-256 values unchanged |
+| Supplemental 16 GiB evidence review | **CERTIFIED** | PASS — existing reports, process logs, saved hashes and artifact sizes inspected; no dataset rerun |
+| Hosted Linux/Windows and CPython 3.9-3.14 P6 matrix | **NOT RUN** | PENDING — all 18 hosted jobs require a future reviewed push |
+
+The fresh 991,852-byte Linux wheel has SHA-256
+`d8bfd09b740b2e1fd3dbc8571b71dab143f181fc18f22783a2b4775c649eb146`.
+It matches P5's artifact because P6 adds no wheel content; the current build
+log and installed runs establish P6 provenance. The final harness hash is
+`5c1bf0337d2d493217932095fe1a53548e3f1992f7a8e4203d560d06a8888973`.
+Retained logs and manual-beta JSON are outside Git; their inventory and exact
+input/artifact hashes are recorded in `TECHNICAL_BETA_II.md` section 5.
+
+Earlier Windows Application Control, WSL startup, and read-only cache failures
+were environment problems, resolved for the final WSL certification through
+approved access. They were not product defects. No engine, wire, planner, or
+public-API defect was demonstrated, and no required local gate remains blocked.
+
+### P6 supplemental real-world evidence
+
+An operator-performed external run used `HI-Large_Trans.csv`, exactly
+17,052,760,651 bytes (approximately 15.88 GiB), with source SHA-256
+`d13635e297c64673826217631fb88d635c4f506052e1bde833895eda2a65c3f2`.
+Analysis was honestly sampled/partial: 10,000 records and 979,049 bytes. The
+planner selected `csv_columnar_dictionary` for high repetition in 9 of 11
+columns and estimated 13.583547% savings plus 3,420.8477 MiB dictionary memory.
+The full structured candidate was deliberately **NOT RUN**; it did not fail.
+
+The operator selected v2 chunked RawZstd with 64 MiB chunks, four threads, four
+in-flight chunks, a 256 MiB admission bound, and adaptive level disabled. The
+17,052,760,651-byte input produced a 3,541,994,339-byte archive: 4.8145x,
+79.23% reduction, 255 chunks, and archive SHA-256
+`f6d722ad2cd11e4ff5509169d8a1821090d8a0e57d2295e1a9577c1b2b595ad9`.
+
+Validation against the source reported `valid=true`, `matched`, no diagnostics,
+and passed v2 header/metadata/payload/decompression/length/chunk-table/per-chunk
+SHA/global-SHA/trailing-data checks. Physical decompression restored exactly
+17,052,760,651 bytes with the original SHA-256, and independent OS-level
+`cmp --silent` passed.
+
+Observed compression, validation, decompression, throughput, and RSS values are
+**OBSERVATIONAL** because the source was accessed through WSL from Windows NTFS
+and cache conditions were not controlled. The planner's 3.34 GiB structured
+estimate and approximately 209 MiB observed v2 process RSS describe different,
+non-comparable paths. They do not prove a multiplicative memory improvement.
+The valid future-design observation is only that resource cost should inform
+planning; bounded structured dictionaries and adaptive/global resource
+management remain deferred v3/adaptive-compute work.
+
+The full methodology, workload matrix, evidence provenance, measurements,
+limitations, and claims boundary are in
+`docs/productization/TECHNICAL_BETA_II.md`.
+
+P6 PyPI, TestPyPI, crates.io, GitHub Release, tag, merge, registry-credential,
+and public-release actions remain **NOT RUN**. P6 does not establish production
+readiness or an external security certification.
 
 ## Preserved external technical-beta evidence
 

@@ -1,6 +1,6 @@
 # CI and repository policy
 
-Status: Phase 14 baseline plus Productization P1 release controls
+Status: Phase 14 baseline plus Productization P1-P6 certification controls
 
 DataPack's local and hosted checks are pinned to Rust 1.85.0. The crate also
 declares `rust-version = "1.85"`; `rust-toolchain.toml` makes the exact
@@ -11,7 +11,7 @@ certification toolchain and required rustfmt/Clippy components reproducible.
 `.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch.
 It grants only read access to repository contents.
 
-The workflow has three independent jobs:
+The workflow defines five job groups, expanding to 18 required jobs:
 
 1. **Rust 1.85** runs formatting, `cargo check --locked`, the full Rust test
    suite, and strict all-target/all-feature Clippy on Linux and Windows.
@@ -19,13 +19,30 @@ The workflow has three independent jobs:
    verifies product identity/version consistency, builds an ABI3 wheel with
    maturin, installs the wheel on Python 3.14, and runs the installed-package
    tests, including distribution/import version identity.
-3. **Dependency policy and package** runs cargo-deny and cargo-audit for both
+3. **Python wheel build** builds and strictly inspects one Linux manylinux2014
+   ABI3 wheel and one Windows MSVC ABI3 wheel, then uploads each only as a
+   temporary CI artifact.
+4. **Python wheel test** reuses each platform wheel across CPython 3.9 through
+   3.14. Each of the 12 isolated jobs runs the installed public-SDK tests and
+   the Productization P6 Technical Beta II CI profile with repository source,
+   Rust, Cargo, maturin, and network installation absent.
+5. **Dependency policy and package** runs cargo-deny and cargo-audit for both
    Rust manifests/lockfiles, then verifies `cargo package --locked` for the
    core crate.
 
 Hosted CI configuration is locally reviewable, but a successful hosted run can
 only be reported after the workflow is executed by GitHub. No workflow run is
 fabricated as part of the local modernization.
+
+The Technical Beta II beta-scale profile, release CLI exercise, and external
+large-file evidence remain manual/local. Hosted P6 timings are observational;
+only correctness assertions gate the jobs. See
+`docs/productization/TECHNICAL_BETA_II.md`.
+
+P6 local implementation and certification are complete; hosted certification is pending.
+The existing topology is unchanged. A reviewed branch push must pass all 18
+hosted jobs before the run ID can be recorded in a documentation-only closure
+commit.
 
 ## Local checks
 

@@ -21,6 +21,7 @@ VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 DIST_INFO = f"datapack_engine-{VERSION}.dist-info"
 PREFIX = f"datapack_engine-{VERSION}-cp39-abi3-"
 INSTALLED_TEST = ROOT / "python/tests/installed_distribution.py"
+TECHNICAL_BETA_II = ROOT / "scripts/technical_beta_ii.py"
 ABSOLUTE_BUILD_PATH = re.compile(
     rb"(?:"
     rb"[A-Za-z]:[\\/]Users[\\/][^\\/\x00]+[\\/]"
@@ -226,6 +227,8 @@ def install_test(wheel: Path) -> None:
         shutil.copy2(wheel, isolated_wheel)
         isolated_test = workspace / INSTALLED_TEST.name
         shutil.copy2(INSTALLED_TEST, isolated_test)
+        isolated_beta = workspace / TECHNICAL_BETA_II.name
+        shutil.copy2(TECHNICAL_BETA_II, isolated_beta)
 
         environment_directory = workspace / "venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(environment_directory)
@@ -266,6 +269,20 @@ def install_test(wheel: Path) -> None:
             cwd=workspace,
             env=environment,
         )
+        subprocess.run(
+            [
+                str(venv_python),
+                "-I",
+                str(isolated_beta),
+                "--profile",
+                "ci",
+                "--forbidden-source-root",
+                str(ROOT.resolve()),
+            ],
+            check=True,
+            cwd=workspace,
+            env=environment,
+        )
         version = subprocess.run(
             [str(venv_python), "--version"],
             check=True,
@@ -276,7 +293,7 @@ def install_test(wheel: Path) -> None:
         print(
             "Installed wheel certification: PASS "
             f"({version}; wheel-only install; repository absent from cwd/sys.path; "
-            "Rust, Cargo, and maturin absent from PATH)"
+            "Rust, Cargo, and maturin absent from PATH; Technical Beta II CI profile PASS)"
         )
 
 
