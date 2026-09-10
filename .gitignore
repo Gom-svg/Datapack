@@ -2,3 +2,6 @@ target/
 fuzz/artifacts/
 *.dpack
 *_restored.*
+/dist/
+/scripts/__pycache__/
+/scripts/tests/__pycache__/

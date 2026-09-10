@@ -1,0 +1,31 @@
+name: Build DataPack ABI3 wheel
+description: Shared P2 wheel build, path hygiene, and exact inspection
+inputs:
+  platform:
+    description: linux or windows, matching the native runner
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Remap build paths
+      shell: bash
+      run: python scripts/release_candidate.py configure-wheel
+    - name: Build release ABI3 wheel
+      uses: PyO3/maturin-action@3e2bdf6ba6453a61e649744019b8a2d906c7eb38 # v1.51.0
+      with:
+        command: build
+        maturin-version: v1.14.1
+        rust-toolchain: 1.85.0
+        target: ${{ inputs.platform == 'linux' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
+        manylinux: ${{ inputs.platform == 'linux' && '2014' || 'off' }}
+        docker-options: ${{ inputs.platform == 'linux' && '-e RUSTFLAGS' || '' }}
+        args: >-
+          --release --locked --strip
+          ${{ inputs.platform == 'linux' && '--auditwheel check' || '' }}
+          --interpreter ${{ inputs.platform == 'linux' && 'python3.14' || 'python' }}
+          --manifest-path python/Cargo.toml --out python/dist
+    - name: Inspect wheel identity, tags, metadata, and contents
+      shell: bash
+      env:
+        DATAPACK_WHEEL_PLATFORM: ${{ inputs.platform }}
+      run: python scripts/certify_python_wheel.py --wheel-dir python/dist --platform "$DATAPACK_WHEEL_PLATFORM" --inspect-only

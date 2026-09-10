@@ -4,12 +4,18 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_candidate:
+        description: Build the internal P7 candidate instead of the compatibility matrix
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   rust:
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
     name: Rust 1.85 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -33,6 +39,7 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   python:
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
     name: Python SDK foundation
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +71,7 @@ jobs:
         run: python -m unittest discover -s python/tests -v
 
   python-wheel-build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
     name: Python wheel build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -72,22 +80,12 @@ jobs:
         include:
           - name: Linux GNU x86_64
             os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            manylinux: "2014"
-            interpreter: python3.14
             platform: linux
             artifact: datapack-python-wheel-linux-x86_64
-            docker-options: -e RUSTFLAGS
-            auditwheel_args: --auditwheel check
           - name: Windows MSVC x86_64
             os: windows-latest
-            target: x86_64-pc-windows-msvc
-            manylinux: "off"
-            interpreter: python
             platform: windows
             artifact: datapack-python-wheel-windows-x86_64
-            docker-options: ""
-            auditwheel_args: ""
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -97,40 +95,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
-      - name: Remap Linux build paths
-        if: runner.os == 'Linux'
-        shell: bash
-        run: >-
-          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=datapack-src
-          --remap-path-prefix=/io=datapack-src
-          --remap-path-prefix=/root=build-home" >> "$GITHUB_ENV"
-      - name: Remap Windows build paths
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: '"RUSTFLAGS=--remap-path-prefix=$env:GITHUB_WORKSPACE=datapack-src --remap-path-prefix=$env:USERPROFILE=build-home" | Out-File -FilePath $env:GITHUB_ENV -Append'
-      - name: Build release ABI3 wheel
-        uses: PyO3/maturin-action@3e2bdf6ba6453a61e649744019b8a2d906c7eb38 # v1.51.0
+      - name: Build and inspect release ABI3 wheel
+        uses: ./.github/actions/build-python-wheel
         with:
-          command: build
-          maturin-version: v1.14.1
-          rust-toolchain: 1.85.0
-          target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux }}
-          docker-options: ${{ matrix.docker-options }}
-          args: >-
-            --release
-            --locked
-            --strip
-            ${{ matrix.auditwheel_args }}
-            --interpreter ${{ matrix.interpreter }}
-            --manifest-path python/Cargo.toml
-            --out python/dist
-      - name: Inspect wheel identity, tags, metadata, and contents
-        run: >-
-          python scripts/certify_python_wheel.py
-          --wheel-dir python/dist
-          --platform ${{ matrix.platform }}
-          --inspect-only
+          platform: ${{ matrix.platform }}
       - name: Upload CI wheel artifact
         uses: actions/upload-artifact@v7
         with:
@@ -141,6 +109,7 @@ jobs:
           compression-level: 0
 
   python-wheel-test:
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
     name: Python wheel (${{ matrix.platform }}, CPython ${{ matrix.python-version }})
     needs: python-wheel-build
     runs-on: ${{ matrix.os }}
@@ -175,6 +144,7 @@ jobs:
           --platform ${{ matrix.platform }}
 
   policy-and-package:
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
     name: Dependency policy and package
     runs-on: ubuntu-latest
     steps:
@@ -201,3 +171,8 @@ jobs:
         run: cargo audit --file python/Cargo.lock
       - name: Verify crate package
         run: cargo package --locked
+
+  release-candidate:
+    name: Explicit internal candidate build
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate
+    uses: ./.github/workflows/release-candidate.yml

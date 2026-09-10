@@ -42,6 +42,11 @@ The current value is `0.1.0`. P1 does not bump it because P1 does not create a
 release. A release version is selected only as part of an authorized release
 candidate or release preparation change.
 
+P7 internal artifact-production candidates retain this development value. They
+exercise release engineering without a SemVer promotion, release tag, or public
+release. The release-preparation steps below apply when a release/version change
+is separately authorized, not to a P7 development artifact build.
+
 ## 3. Semantic Versioning policy
 
 DataPack package/application versions use `MAJOR.MINOR.PATCH` Semantic Versioning,

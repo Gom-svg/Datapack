@@ -2,3 +2,11 @@
 tests/fixtures/compatibility/*_source.* text eol=lf
 tests/fixtures/compatibility/*.dpack -text
 tests/golden/analyze/*.golden text eol=lf
+
+# Release inputs must have identical bytes in Linux and Windows checkouts.
+LICENSE-MIT text eol=lf
+SECURITY.md text eol=lf
+python/DATAPACK-LICENSE-MIT text eol=lf
+docs/releases/*.md text eol=lf
+Cargo.lock text eol=lf
+python/Cargo.lock text eol=lf

@@ -1,0 +1,98 @@
+name: Release Candidate Artifacts
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    if: github.event_name == 'workflow_dispatch'
+    name: Candidate (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+          - platform: windows
+            os: windows-latest
+    steps:
+      - name: Check out exact workflow source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install certified Rust
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Install Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Check product identity and version
+        run: python scripts/check_version_consistency.py
+      - name: Test release tooling
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build and inspect the platform wheel
+        uses: ./.github/actions/build-python-wheel
+        with:
+          platform: ${{ matrix.platform }}
+      - name: Build, package, and certify native platform artifacts
+        run: >-
+          python scripts/release_candidate.py build
+          --platform ${{ matrix.platform }} --wheel-dir python/dist
+          --out dist/platform
+      - name: Retain certified platform output for aggregation
+        uses: actions/upload-artifact@v7
+        with:
+          name: datapack-candidate-${{ matrix.platform }}-${{ github.sha }}
+          path: dist/platform/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  bundle:
+    name: Verify complete candidate bundle
+    needs: platform
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact workflow source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Download Linux platform artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: datapack-candidate-linux-${{ github.sha }}
+          path: dist/linux
+      - name: Download Windows platform artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: datapack-candidate-windows-${{ github.sha }}
+          path: dist/windows
+      - name: Assemble and verify all mandatory artifacts
+        env:
+          DATAPACK_SOURCE_SHA: ${{ github.sha }}
+        run: >-
+          python scripts/release_candidate.py assemble
+          --platform-dir dist/linux --platform-dir dist/windows
+          --out dist/candidate --expected-commit "$DATAPACK_SOURCE_SHA"
+      - name: Independently verify conventional SHA-256 checksums
+        working-directory: dist/candidate
+        run: sha256sum --check datapack-*-SHA256SUMS.txt
+      - name: Retain the complete internal candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: datapack-candidate-bundle-${{ github.sha }}
+          path: dist/candidate/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

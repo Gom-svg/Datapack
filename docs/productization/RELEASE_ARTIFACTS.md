@@ -6,6 +6,10 @@ This document defines the public release artifact contract P7 must implement.
 P2 implements and certifies platform wheels as temporary GitHub Actions
 artifacts; it does not upload, sign, or publish release artifacts.
 
+P7 implements this contract for internal development candidates in
+`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. Hosted P7 certification is **PENDING**.
+The candidate workflow does not authorize or perform public distribution.
+
 ## 1. Artifact set
 
 For an authorized version `{version}`, the initial release set is:

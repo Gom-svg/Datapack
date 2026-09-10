@@ -54,7 +54,7 @@ This report uses only these status labels:
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
 | P6 — Technical Beta II | **CERTIFIED — CLOSED** | Local certification passed, including current installed-wheel CI/manual beta, release CLI, security/package, protected compatibility, and supplemental 16 GiB evidence review. Hosted certification passed in run `34404009535`: SUCCESS, all 18 required jobs passed. P6 is formally closed. See `TECHNICAL_BETA_II.md`. |
-| P7 — Release Artifacts / Release Engineering | **DEFERRED** | Next phase after P6 closure; not started. No release artifact workflow implemented. |
+| P7 — Release Artifacts / Release Engineering | **IMPLEMENTED**, locally **CERTIFIED** | Internal CLI/wheel candidate builds, extracted CLI and isolated wheel certification, checksums, source-provenance manifests, and a manual two-platform/aggregation workflow. All applicable local gates passed; hosted certification **PENDING**. See `RELEASE_ARTIFACTS_AND_ENGINEERING.md`. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
 
 ## P0 outcome
@@ -947,7 +947,8 @@ the P6 CI profile.
 
 Local certification passed and hosted certification passed. P6 Technical Beta
 II is formally closed with status **CERTIFIED — CLOSED**. P7 — Release
-Artifacts / Release Engineering is next and has not started, followed by
+Artifacts / Release Engineering follows this closure; its current outcome is
+recorded below. The subsequent phases remain
 P8 — Desktop Foundation, then the Final Productization Acceptance Test.
 Adaptive Compute and V3 remain separate future programs.
 
@@ -994,6 +995,52 @@ limitations, and claims boundary are in
 P6 PyPI, TestPyPI, crates.io, GitHub Release, tag, merge, registry-credential,
 and public-release actions remain **NOT RUN**. P6 does not establish production
 readiness or an external security certification.
+
+## P7 Release Artifacts / Release Engineering outcome
+
+P7 is **IMPLEMENTED** and locally **CERTIFIED** as internal candidate-production
+tooling, with hosted certification **PENDING**. It starts from clean P6 closure checkpoint
+`365b1ca3a2b8ca55bc5e20ae8ff40569184c0bad`. It reuses P1's canonical archive,
+notes, manifest, checksum, and five-member CLI package contract, plus P2/P6's
+pinned wheel builds, exact inspection, isolated SDK tests, and CI profile.
+
+`scripts/release_candidate.py` uses Python 3.9-compatible standard-library code
+to build native release CLIs, create normalized archives, inspect/extract and
+smoke-test packaged binaries, build/certify wheels, record per-platform evidence,
+and assemble/verify a complete seven-file candidate. The final bundle contains
+two CLI packages, two standard ABI3 wheels, notes, a canonical JSON manifest,
+and conventional SHA-256 checksums. Exact source SHA, lockfile hashes, toolchain,
+workflow identity, artifact bytes/hashes, and smoke results are recorded.
+Dirty local rehearsals cannot be assembled into clean-source candidates.
+
+The dedicated workflow has two native jobs (Linux GNU x86_64 and Windows MSVC
+x86_64) and one aggregation job, with 14-day internal artifact retention.
+Existing CI calls a shared wheel-build action and keeps its normal 18-job
+compatibility matrix. An explicit manual `release_candidate=true` CI invocation
+routes to P7 instead of that matrix, allowing branch-only testing before the
+new dedicated workflow is registered on the default branch. This is the only
+new CI routing; candidate production never runs automatically on push or PR.
+
+Local certification passed: 382 Rust tests, strict core/binding checks, 21
+release-tool tests, Python 3.9 grammar/Ruff checks across nine files, 15 SDK tests,
+five isolated-distribution tests plus the P6 CI profile, native Linux extracted
+CLI V1/V2 smoke, fresh ABI3 wheel, actionlint/YAML inspection, both dependency
+policy/audit gates, package verification (175 files), and unchanged protected
+compatibility. Local artifacts are explicitly marked dirty-source rehearsals;
+complete candidate assembly requires matching clean commits. Narrow LF attributes
+keep packaged documents and lockfile provenance stable across host checkouts.
+Full evidence and artifact hashes are in
+`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. Windows native artifact execution and the
+complete real two-platform bundle require hosted certification. Synthetic unit
+fixtures are not Windows build evidence. No 16 GiB dataset execution is part of
+P7.
+
+P7 preserves engine/planner semantics, V1/V2 formats and protected hashes, exact
+bytes, P3/P4/P5 contracts, public APIs, product identity, dependencies, MSRV, ABI3,
+and development `VERSION` 0.1.0. It introduces no public release, registry upload,
+tag, signature, installer, supply-chain certification claim, or production-
+readiness claim. P8 remains **DEFERRED** until P7 hosted closure; Adaptive Compute
+and V3 remain separate future programs.
 
 ## Preserved external technical-beta evidence
 

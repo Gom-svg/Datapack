@@ -12,6 +12,9 @@ release availability.
 
 ### Added
 
+- Internal release-candidate packaging, extracted CLI smoke certification,
+  checksums and source-provenance manifests, plus a manual Linux/Windows artifact
+  workflow reusing the existing ABI3 wheel build. Publication remains deferred.
 - Productization P0 readiness audit and evidence ledger.
 - Productization P1 release/versioning, release-note, artifact, checksum, and
   supported-platform policies.

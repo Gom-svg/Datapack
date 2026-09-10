@@ -1,6 +1,6 @@
 # CI and repository policy
 
-Status: Phase 14 baseline plus Productization P1-P6 certification controls
+Status: Phase 14 baseline plus Productization P1-P7 certification controls
 
 DataPack's local and hosted checks are pinned to Rust 1.85.0. The crate also
 declares `rust-version = "1.85"`; `rust-toolchain.toml` makes the exact
@@ -11,7 +11,8 @@ certification toolchain and required rustfmt/Clippy components reproducible.
 `.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch.
 It grants only read access to repository contents.
 
-The workflow defines five job groups, expanding to 18 required jobs:
+Ordinary pushes, pull requests, and manual CI runs execute five compatibility
+job groups, expanding to 18 required jobs:
 
 1. **Rust 1.85** runs formatting, `cargo check --locked`, the full Rust test
    suite, and strict all-target/all-feature Clippy on Linux and Windows.
@@ -44,8 +45,31 @@ P6 local certification passed and hosted certification passed. Hosted run
 completed with **SUCCESS** at technical commit
 `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`: all 18 required hosted jobs passed.
 P6 Technical Beta II is formally closed with status **CERTIFIED — CLOSED**.
-The workflow topology is unchanged. P7 — Release Artifacts / Release Engineering
-is next and has not started.
+The P6 workflow topology was unchanged. P7 now shares the wheel build through
+`.github/actions/build-python-wheel/action.yml` and adds an opt-in manual
+release-candidate route; normal CI retains all 18 required compatibility jobs.
+
+## Internal release-candidate workflow
+
+`.github/workflows/release-candidate.yml` builds and certifies two native platform
+outputs, then aggregates them in a third job. It supports manual dispatch and a
+call from CI, guarded by a manual event. CI's boolean `release_candidate` input
+defaults to false. Setting it to true on a manual invocation skips the broad
+compatibility matrix for that invocation and calls the P7 workflow instead.
+This lets the existing registered CI workflow start branch-only P7 certification
+without a merge or an automatic push trigger.
+
+Both native jobs use Rust/Cargo 1.85.0, package and extract their CLI, exercise
+V1/V2 exact-byte smokes, and certify the platform wheel with the unchanged
+isolated SDK/P6 certifier on CPython 3.14. Aggregation requires both platforms,
+matching clean source/workflow/lockfile provenance, package inspection, manifest
+and checksum verification, and an independent `sha256sum --check` before upload.
+
+All permissions remain `contents: read`. Uploads are internal Actions artifacts
+with 14-day retention. No release, registry, tag, signing, or publication action
+exists. Hosted P7 evidence is **PENDING**. See
+`docs/productization/RELEASE_ARTIFACTS_AND_ENGINEERING.md` for the contract, local
+build path, dispatch commands, and evidence boundaries.
 
 ## Local checks
 
@@ -104,6 +128,6 @@ versions, exact path dependency, Python distribution version, Python import
 version, lockfile entries, CLI identity, and distribution/import identities are
 checked by `scripts/check_version_consistency.py`.
 
-P1 defines release/versioning and artifact/checksum policy but does not create a
-release workflow or public artifact. Those remain later Productization phases and
-explicit publication actions remain separately authorized.
+P1 defines release/versioning and artifact/checksum policy. P7 implements internal
+candidate production without changing `VERSION` or publishing artifacts publicly.
+Public distribution remains separately authorized.
