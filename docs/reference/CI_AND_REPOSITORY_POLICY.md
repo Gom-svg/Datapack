@@ -39,10 +39,13 @@ large-file evidence remain manual/local. Hosted P6 timings are observational;
 only correctness assertions gate the jobs. See
 `docs/productization/TECHNICAL_BETA_II.md`.
 
-P6 local implementation and certification are complete; hosted certification is pending.
-The existing topology is unchanged. A reviewed branch push must pass all 18
-hosted jobs before the run ID can be recorded in a documentation-only closure
-commit.
+P6 local certification passed and hosted certification passed. Hosted run
+[`34404009535`](https://github.com/Gom-svg/Datapack/actions/runs/34404009535)
+completed with **SUCCESS** at technical commit
+`621574a2607e3857fe932dbe9db8ec6eddc5a9fd`: all 18 required hosted jobs passed.
+P6 Technical Beta II is formally closed with status **CERTIFIED — CLOSED**.
+The workflow topology is unchanged. P7 — Release Artifacts / Release Engineering
+is next and has not started.
 
 ## Local checks
 

@@ -36,6 +36,7 @@ This report uses only these status labels:
 | Hosted pre-P5 branch CI | **CERTIFIED** | `productization/foundation` run `32712910071` and `main` run `32713671052`; both SUCCESS |
 | Hosted P5 API/error CI | **CERTIFIED** | run `32716713250` at technical checkpoint `5bed871036621911863d26b67e27a54019370104`; all 18 required jobs passed |
 | P6 starting checkpoint | **CERTIFIED** | clean post-P5 checkpoint `ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5` on `productization/foundation` |
+| Hosted P6 Technical Beta II CI | **CERTIFIED** | run `34404009535` at technical checkpoint `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`; SUCCESS, all 18 required jobs passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -52,8 +53,8 @@ This report uses only these status labels:
 | P3 — Progress API | **CERTIFIED** | One additive Rust progress contract now serves Application callers, CLI, and Python; terminal success, optional totals, deterministic cadence, ordered v2 chunk facts, callback behavior, and observational byte equivalence are certified locally and in hosted CI run `32701817032`. |
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
-| P6 — Technical Beta II | **IMPLEMENTED** | Local implementation and certification complete: Rust/Python, current installed-wheel CI/manual beta, release CLI, security/package, and protected compatibility gates passed. Supplemental real-world 16 GiB evidence verified. Hosted certification is pending (**NOT RUN**); P6 is not formally closed. See `TECHNICAL_BETA_II.md`. |
-| P7 — Release Artifacts / Release Engineering | **DEFERRED** | No release artifact workflow implemented. |
+| P6 — Technical Beta II | **CERTIFIED — CLOSED** | Local certification passed, including current installed-wheel CI/manual beta, release CLI, security/package, protected compatibility, and supplemental 16 GiB evidence review. Hosted certification passed in run `34404009535`: SUCCESS, all 18 required jobs passed. P6 is formally closed. See `TECHNICAL_BETA_II.md`. |
+| P7 — Release Artifacts / Release Engineering | **DEFERRED** | Next phase after P6 closure; not started. No release artifact workflow implemented. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
 
 ## P0 outcome
@@ -853,7 +854,7 @@ production-ready and has no external security audit.
 
 ## P6 Technical Beta II outcome
 
-P6 is **IMPLEMENTED** as additive certification infrastructure. It starts from
+P6 is **CERTIFIED — CLOSED** as additive certification infrastructure. It starts from
 clean post-P5 checkpoint
 `ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5` and does not modify engine, codec,
 planner, archive, Rust API, Python ABI, dependency, or workflow-topology code.
@@ -883,13 +884,14 @@ expected planner modes. It then exercises:
 `scripts/certify_python_wheel.py` copies that harness into the existing
 isolated wheel workspace and runs its CI profile after the installed public-SDK
 tests. It remains outside the wheel, so the exact eight-member runtime allowlist
-is unchanged. The existing Linux/Windows × CPython 3.9-3.14 wheel matrix will
-execute P6 in all 12 isolated jobs without adding a workflow or publication
+is unchanged. The existing Linux/Windows × CPython 3.9-3.14 wheel matrix
+executed P6 in all 12 isolated jobs without adding a workflow or publication
 path.
 
 ### P6 final local evidence
 
-P6 local implementation and certification are complete; hosted certification is pending.
+P6 local implementation and certification are complete. Hosted certification
+also passed; its closure evidence is recorded below.
 The final executable tree passed certification in WSL on 2026-09-08. The
 2026-09-09 continuation recovered the retained logs and confirmed that
 `cargo package --locked --allow-dirty` had completed with exit status 0 before
@@ -917,7 +919,7 @@ beta ran after that final edit. The manual run included the 4,097-column and
 | `cargo package --locked --allow-dirty` | **CERTIFIED** | PASS — 168 files; verification build completed, exit 0 |
 | Protected V1/V2 compatibility | **CERTIFIED** | PASS — four tests and all six frozen sizes/SHA-256 values unchanged |
 | Supplemental 16 GiB evidence review | **CERTIFIED** | PASS — existing reports, process logs, saved hashes and artifact sizes inspected; no dataset rerun |
-| Hosted Linux/Windows and CPython 3.9-3.14 P6 matrix | **NOT RUN** | PENDING — all 18 hosted jobs require a future reviewed push |
+| Hosted Linux/Windows and CPython 3.9-3.14 P6 matrix | **CERTIFIED** | PASS — run `34404009535`, SUCCESS, all 18 required hosted jobs passed at technical commit `621574a2607e3857fe932dbe9db8ec6eddc5a9fd` |
 
 The fresh 991,852-byte Linux wheel has SHA-256
 `d8bfd09b740b2e1fd3dbc8571b71dab143f181fc18f22783a2b4775c649eb146`.
@@ -931,6 +933,28 @@ Earlier Windows Application Control, WSL startup, and read-only cache failures
 were environment problems, resolved for the final WSL certification through
 approved access. They were not product defects. No engine, wire, planner, or
 public-API defect was demonstrated, and no required local gate remains blocked.
+
+### P6 hosted certification closure
+
+Hosted run
+[`34404009535`](https://github.com/Gom-svg/Datapack/actions/runs/34404009535)
+completed with result **SUCCESS** at technical checkpoint
+`621574a2607e3857fe932dbe9db8ec6eddc5a9fd` on `productization/foundation`.
+All 18 required hosted jobs passed: Rust 1.85 on Linux and Windows, Python SDK
+foundation, both platform ABI3 wheel builds, dependency policy/audit/package,
+and all 12 isolated Linux/Windows wheel jobs across CPython 3.9-3.14, including
+the P6 CI profile.
+
+Local certification passed and hosted certification passed. P6 Technical Beta
+II is formally closed with status **CERTIFIED — CLOSED**. P7 — Release
+Artifacts / Release Engineering is next and has not started, followed by
+P8 — Desktop Foundation, then the Final Productization Acceptance Test.
+Adaptive Compute and V3 remain separate future programs.
+
+This documentation-only closure does not change code, workflows, dependencies,
+formats, or public API, and does not establish production readiness or
+authorize publication. The manual and supplemental evidence caveats remain
+unchanged.
 
 ### P6 supplemental real-world evidence
 

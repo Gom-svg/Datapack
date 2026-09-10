@@ -177,8 +177,15 @@ P6 local certification rebuilt the Linux manylinux2014 `cp39-abi3` wheel with
 maturin 1.14.1 and passed this complete isolated gate on CPython 3.14.4,
 including all five installed-distribution tests and the P6 CI profile. The
 full manual-beta profile, 15 SDK tests, and installed stub/runtime signature
-checks also passed against that current wheel. P6 hosted certification remains
-**PENDING / NOT RUN**; the P2 hosted evidence below is historical.
+checks also passed against that current wheel. P6 hosted certification passed
+in run
+[`34404009535`](https://github.com/Gom-svg/Datapack/actions/runs/34404009535)
+at technical commit `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`: **SUCCESS**,
+all 18 required hosted jobs passed. This includes both platform ABI3 wheel
+builds and all 12 isolated Linux/Windows wheel jobs on CPython 3.9-3.14.
+P6 Technical Beta II is **CERTIFIED — CLOSED**; P7 — Release Artifacts / Release
+Engineering is next and has not started. The P2 hosted evidence below remains
+historical.
 
 ## 7. Hosted CI
 

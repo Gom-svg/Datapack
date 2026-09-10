@@ -2,14 +2,19 @@
 
 Productization phase: P6
 
-Status: **IMPLEMENTED**, locally **CERTIFIED**.
+Status: **CERTIFIED — CLOSED**.
 
-P6 local implementation and certification are complete; hosted certification is pending.
-Hosted status: **PENDING / NOT RUN**. P6 is not formally closed.
+Local certification passed. Hosted certification passed in run
+[`34404009535`](https://github.com/Gom-svg/Datapack/actions/runs/34404009535)
+with result **SUCCESS**: all 18 required hosted jobs passed. P6 Technical Beta II
+is formally closed. P7 — Release Artifacts / Release Engineering is next and
+has not started.
 
 Development version: `0.1.0`
 
 Starting checkpoint: `ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5`
+
+Certified technical checkpoint: `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`
 
 ## 1. Purpose and evidence boundary
 
@@ -203,7 +208,7 @@ inside all 12 wheel-test jobs:
 - one wheel built per platform and reused across its six interpreters.
 
 The beta-only width/record probes, release CLI path, and external 16 GiB test
-remain manual evidence. Hosted logs will contain the P6 JSON; the workflow uploads
+remain manual evidence. Hosted logs contain the P6 JSON; the workflow uploads
 only the already-authorized temporary wheel artifacts and publishes nothing.
 
 ## 5. Final local certification evidence
@@ -233,11 +238,11 @@ rerunning the completed gates. No required local gate remains unknown or failed.
 | Protected V1/V2 compatibility | **PASS** | Four compatibility tests; all six frozen fixture sizes and SHA-256 values unchanged |
 | Supplemental 16 GiB evidence review | **PASS** | Existing analysis, validation, process logs, saved SHA-256 records, and archive/restored sizes inspected; dataset execution not repeated |
 
-The local runtime evidence is Linux CPython 3.14.4. The current P6 Linux/Windows
-and CPython 3.9-3.14 hosted matrix remains **PENDING / NOT RUN**; prior-phase
-hosted success is not presented as P6 certification. Windows local execution
-remains environment-limited. Public distribution and P7 work are not applicable
-to this local certification.
+The local runtime evidence is Linux CPython 3.14.4. The P6 Linux/Windows and
+CPython 3.9-3.14 hosted matrix passed in run `34404009535`, as recorded in
+section 5.3. Windows local execution remains environment-limited; Windows
+certification comes from that hosted run. Public distribution and P7 work
+remain outside this certification.
 
 ### 5.1 Exact revision and retained evidence
 
@@ -280,6 +285,39 @@ and formatting issues without changing lint policy or executable behavior.
 Expected rejection, cancellation, invalid-archive, resource-limit, and
 unsupported structured-analysis outcomes passed their existing assertions.
 No engine, planner, wire-format, or public-API defect was demonstrated.
+
+### 5.3 Hosted certification closure
+
+Hosted CI run
+[`34404009535`](https://github.com/Gom-svg/Datapack/actions/runs/34404009535)
+completed with result **SUCCESS** on `productization/foundation` at technical
+commit `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`. Run status and all job
+conclusions were inspected without rerunning certification. All 18 required
+hosted jobs passed:
+
+| Hosted coverage | Jobs | Result |
+| --- | ---: | --- |
+| Rust 1.85 on Linux and Windows | 2 | **PASS** |
+| Python SDK foundation | 1 | **PASS** |
+| Linux GNU x86_64 and Windows MSVC x86_64 ABI3 wheel builds | 2 | **PASS** |
+| Dependency policy, cargo audit, and cargo package | 1 | **PASS** |
+| Isolated Linux wheel certification, CPython 3.9-3.14 | 6 | **PASS** |
+| Isolated Windows wheel certification, CPython 3.9-3.14 | 6 | **PASS** |
+| Total | 18 | **18/18 PASS** |
+
+The 12 isolated wheel jobs include the installed SDK and P6 CI profile. The
+manual-beta profile, release CLI, and supplemental 16 GiB run retain their
+local evidence scope. Local certification and hosted certification have both
+passed: P6 Technical Beta II is **CERTIFIED — CLOSED**.
+
+P6 required no engine semantic change, planner semantic change, V1/V2 wire
+change, protected hash change, public API change, dependency change, or CI
+topology change.
+
+P7 — Release Artifacts / Release Engineering is next; it has not begun. This
+documentation-only closure does not change product behavior or authorize
+publication. DataPack is not yet production-ready, and performance measurements
+remain observational.
 
 ## 6. Supplemental real-world 16 GiB evidence
 
