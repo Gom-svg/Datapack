@@ -67,9 +67,26 @@ and checksum verification, and an independent `sha256sum --check` before upload.
 
 All permissions remain `contents: read`. Uploads are internal Actions artifacts
 with 14-day retention. No release, registry, tag, signing, or publication action
-exists. Hosted P7 evidence is **PENDING**. See
-`docs/productization/RELEASE_ARTIFACTS_AND_ENGINEERING.md` for the contract, local
-build path, dispatch commands, and evidence boundaries.
+exists. P7 is **CERTIFIED — CLOSED** at technical commit
+`8f70179bd68701ad7dfa7fe909870e880845ad77`. Normal push CI
+[`34546542428`](https://github.com/Gom-svg/Datapack/actions/runs/34546542428)
+passed all 18 required jobs. Manual `release_candidate=true` run
+[`34660317844`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844)
+(attempt 1) passed Linux native candidate `103461273675`, Windows/MSVC native
+candidate `103461273537`, and aggregation `103462190885`; the normal matrix
+was skipped for this invocation.
+
+The final internal artifact,
+`datapack-candidate-bundle-8f70179bd68701ad7dfa7fe909870e880845ad77`,
+contains the two canonical CLI packages, two standard `cp39-abi3` wheels, notes,
+canonical manifest, and checksum file. Both hosted aggregation and subsequent
+download verification passed manifest metadata, file-set/size/hash, clean-source
+provenance, and independent checksum checks (six entries OK). Both platform
+records agree on the technical SHA, `source.dirty=false`, lockfile hashes,
+Rust/Cargo 1.85.0, and workflow/run/attempt. See
+`docs/productization/RELEASE_ARTIFACTS_AND_ENGINEERING.md`, section 8, for exact
+filenames, hashes, native execution evidence, and limitations. Closure changed
+documentation only; development `VERSION` remains `0.1.0`, and P8 remains next.
 
 ## Local checks
 

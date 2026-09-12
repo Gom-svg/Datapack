@@ -129,10 +129,18 @@ The initial Productization release-target policy is deliberately narrow:
 
 | Surface | Initial target | Current evidence | Release-support gate |
 | --- | --- | --- | --- |
-| Rust CLI | `x86_64-unknown-linux-gnu` | Hosted Linux source build/test/Clippy | P7 release build plus isolated artifact smoke test and recorded runtime baseline |
-| Rust CLI | `x86_64-pc-windows-msvc` | Hosted native Windows source build/test/Clippy | P7 release build plus isolated artifact smoke test |
-| Python wheel | Linux x86_64, CPython ABI3 | One hosted Linux ABI3 foundation wheel | P2 wheel/tag/install matrix |
-| Python wheel | Windows x86_64, CPython ABI3 | No hosted Windows wheel evidence | P2 wheel/tag/install matrix |
+| Rust CLI | `x86_64-unknown-linux-gnu` | P7 hosted native candidate and extracted CLI smoke PASS; glibc 2.39 host, highest observed GLIBC symbol 2.34 | P7 release build plus isolated artifact smoke test and recorded runtime baseline |
+| Rust CLI | `x86_64-pc-windows-msvc` | P7 hosted native MSVC candidate and extracted `datapack.exe` smoke PASS | P7 release build plus isolated artifact smoke test |
+| Python wheel | Linux x86_64, CPython ABI3 | P7 manylinux2014 candidate PASS on CPython 3.14.7; normal CI matrix PASS on 3.9–3.14 | P2 wheel/tag/install matrix |
+| Python wheel | Windows x86_64, CPython ABI3 | P7 native MSVC candidate PASS on CPython 3.14.7; normal CI matrix PASS on 3.9–3.14 | P2 wheel/tag/install matrix |
+
+P7 is **CERTIFIED — CLOSED** at technical commit
+`8f70179bd68701ad7dfa7fe909870e880845ad77`: normal CI `34546542428` and
+candidate run `34660317844` passed, including both native platforms, aggregation,
+and downloaded bundle manifest/checksum/clean-source verification. Exact evidence
+is in `RELEASE_ARTIFACTS_AND_ENGINEERING.md`, section 8. These are internal
+development `0.1.0` artifacts; no released artifact support or additional
+older-glibc portability is inferred.
 
 Linux and Windows source CI certification is not silently promoted into released
 artifact support. A target becomes supported for a release only when that release's

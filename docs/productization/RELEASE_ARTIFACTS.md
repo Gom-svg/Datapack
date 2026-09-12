@@ -2,13 +2,22 @@
 
 Status: **CERTIFIED POLICY — Productization P1**
 
-This document defines the public release artifact contract P7 must implement.
+This document defines the public release artifact contract implemented by P7
+for internal development candidates.
 P2 implements and certifies platform wheels as temporary GitHub Actions
 artifacts; it does not upload, sign, or publish release artifacts.
 
 P7 implements this contract for internal development candidates in
-`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. Hosted P7 certification is **PENDING**.
-The candidate workflow does not authorize or perform public distribution.
+`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. P7 is **CERTIFIED — CLOSED** at technical
+commit `8f70179bd68701ad7dfa7fe909870e880845ad77`: normal CI `34546542428`
+and hosted candidate run
+[`34660317844`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844)
+passed. Linux native, Windows/MSVC native, aggregation, and downloaded complete
+bundle verification all passed, including exact filenames, manifest metadata,
+sizes/hashes, six checksum entries, and matching clean-source provenance.
+Section 8 of the engineering record retains the exact artifact IDs and bytes.
+Development version `0.1.0` is unchanged; the candidate workflow does not
+authorize or perform public distribution.
 
 ## 1. Artifact set
 

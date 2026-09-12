@@ -37,6 +37,8 @@ This report uses only these status labels:
 | Hosted P5 API/error CI | **CERTIFIED** | run `32716713250` at technical checkpoint `5bed871036621911863d26b67e27a54019370104`; all 18 required jobs passed |
 | P6 starting checkpoint | **CERTIFIED** | clean post-P5 checkpoint `ca1f0f7777a81481dfbecb3e1b8e3112bf6045c5` on `productization/foundation` |
 | Hosted P6 Technical Beta II CI | **CERTIFIED** | run `34404009535` at technical checkpoint `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`; SUCCESS, all 18 required jobs passed |
+| Hosted P7 normal CI | **CERTIFIED** | run `34546542428` at technical checkpoint `8f70179bd68701ad7dfa7fe909870e880845ad77`; SUCCESS, all 18 required jobs passed |
+| Hosted P7 release candidate | **CERTIFIED** | run `34660317844`, attempt 1, at the same P7 technical checkpoint; SUCCESS, Linux native, Windows/MSVC native, aggregation, and downloaded seven-file bundle verification passed |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -54,7 +56,7 @@ This report uses only these status labels:
 | P4 — Cooperative Cancellation | **CERTIFIED** | Explicit `CancellationToken`/`OperationControl`, typed cancellation outcomes, transactional commit precedence, safe v1/v2/read/benchmark checkpoints, and Python cancellation are implemented and certified locally and in hosted CI run `32709843703`. Failed run `32708310316` and its Windows strict-Clippy remediation remain recorded below. |
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
 | P6 — Technical Beta II | **CERTIFIED — CLOSED** | Local certification passed, including current installed-wheel CI/manual beta, release CLI, security/package, protected compatibility, and supplemental 16 GiB evidence review. Hosted certification passed in run `34404009535`: SUCCESS, all 18 required jobs passed. P6 is formally closed. See `TECHNICAL_BETA_II.md`. |
-| P7 — Release Artifacts / Release Engineering | **IMPLEMENTED**, locally **CERTIFIED** | Internal CLI/wheel candidate builds, extracted CLI and isolated wheel certification, checksums, source-provenance manifests, and a manual two-platform/aggregation workflow. All applicable local gates passed; hosted certification **PENDING**. See `RELEASE_ARTIFACTS_AND_ENGINEERING.md`. |
+| P7 — Release Artifacts / Release Engineering | **CERTIFIED — CLOSED** | Local certification and normal CI `34546542428` passed. Manual candidate run `34660317844` passed Linux native, Windows/MSVC native, and aggregation; the downloaded seven-file bundle passed manifest, checksums, and matching clean-source verification at `8f70179bd68701ad7dfa7fe909870e880845ad77`. See `RELEASE_ARTIFACTS_AND_ENGINEERING.md`. |
 | P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
 
 ## P0 outcome
@@ -998,11 +1000,12 @@ readiness or an external security certification.
 
 ## P7 Release Artifacts / Release Engineering outcome
 
-P7 is **IMPLEMENTED** and locally **CERTIFIED** as internal candidate-production
-tooling, with hosted certification **PENDING**. It starts from clean P6 closure checkpoint
-`365b1ca3a2b8ca55bc5e20ae8ff40569184c0bad`. It reuses P1's canonical archive,
-notes, manifest, checksum, and five-member CLI package contract, plus P2/P6's
-pinned wheel builds, exact inspection, isolated SDK tests, and CI profile.
+P7 is **CERTIFIED — CLOSED** as internal candidate-production tooling, with local
+and hosted certification passed at technical commit
+`8f70179bd68701ad7dfa7fe909870e880845ad77`. It started from clean P6 closure
+checkpoint `365b1ca3a2b8ca55bc5e20ae8ff40569184c0bad`. It reuses P1's canonical
+archive, notes, manifest, checksum, and five-member CLI package contract, plus
+P2/P6's pinned wheel builds, exact inspection, isolated SDK tests, and CI profile.
 
 `scripts/release_candidate.py` uses Python 3.9-compatible standard-library code
 to build native release CLIs, create normalized archives, inspect/extract and
@@ -1026,21 +1029,55 @@ release-tool tests, Python 3.9 grammar/Ruff checks across nine files, 15 SDK tes
 five isolated-distribution tests plus the P6 CI profile, native Linux extracted
 CLI V1/V2 smoke, fresh ABI3 wheel, actionlint/YAML inspection, both dependency
 policy/audit gates, package verification (175 files), and unchanged protected
-compatibility. Local artifacts are explicitly marked dirty-source rehearsals;
-complete candidate assembly requires matching clean commits. Narrow LF attributes
-keep packaged documents and lockfile provenance stable across host checkouts.
+compatibility. The pre-commit local artifacts recorded here are explicitly
+marked dirty-source rehearsals; complete candidate assembly requires matching
+clean commits. Narrow LF attributes keep packaged documents and lockfile
+provenance stable across host checkouts.
 Full evidence and artifact hashes are in
-`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. Windows native artifact execution and the
-complete real two-platform bundle require hosted certification. Synthetic unit
-fixtures are not Windows build evidence. No 16 GiB dataset execution is part of
-P7.
+`RELEASE_ARTIFACTS_AND_ENGINEERING.md`. Synthetic unit fixtures are not Windows
+build evidence. No 16 GiB dataset execution is part of P7.
+
+Normal push CI
+[`34546542428`](https://github.com/Gom-svg/Datapack/actions/runs/34546542428)
+passed all 18 required jobs. The authorized `release_candidate=true` dispatch
+then completed in
+[`34660317844`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844),
+attempt 1, with **SUCCESS** for all three P7 jobs: Linux native candidate
+`103461273675`, Windows/MSVC native candidate `103461273537`, and aggregation
+`103462190885`. The normal compatibility groups were skipped for this dedicated
+candidate invocation. Both native jobs built, packaged, extracted, and executed
+their CLI with V1/V2 byte-exact smoke checks, certified the standard ABI3 wheel
+on CPython 3.14.7 with the isolated installed tests and P6 CI profile, and
+produced a platform certification record.
+
+The final internal Actions artifact is
+`datapack-candidate-bundle-8f70179bd68701ad7dfa7fe909870e880845ad77`
+(ID `10287287243`, 14-day retention). Aggregation required both platforms and
+matching provenance, verified all seven mandatory files and canonical manifest
+metadata/sizes/hashes, and passed independent SHA-256 verification before upload.
+The downloaded bundle independently passed the unchanged repository verifier
+from the matching clean checkout and `sha256sum --check` for all six entries.
+Both platform records match its bytes, `source.dirty=false`, source commit,
+lockfile hashes, Rust/Cargo 1.85.0, and workflow `CI` / `34660317844` / attempt `1`.
+Exact filenames, artifact IDs, hashes, and job evidence are recorded in
+`RELEASE_ARTIFACTS_AND_ENGINEERING.md`, section 8.
+
+No failure required a source fix or rerun. The existing Windows symlink-test
+skip is a privilege limitation (the test passed on Linux); an upstream Actions
+Node deprecation warning was non-failing. All native artifact gates passed.
+Closure changed documentation only and did not rerun expensive local gates on
+the unchanged technical tree.
 
 P7 preserves engine/planner semantics, V1/V2 formats and protected hashes, exact
 bytes, P3/P4/P5 contracts, public APIs, product identity, dependencies, MSRV, ABI3,
 and development `VERSION` 0.1.0. It introduces no public release, registry upload,
 tag, signature, installer, supply-chain certification claim, or production-
-readiness claim. P8 remains **DEFERRED** until P7 hosted closure; Adaptive Compute
-and V3 remain separate future programs.
+readiness claim. There is no GitHub Release, notarization, SLSA-level claim,
+reproducible-build claim, macOS/ARM support, or broader older-glibc certification.
+P8 remains **DEFERRED** and is next after user review, push of the
+documentation-only P7 closure commit, and optional normal-CI verification.
+P8 was not begun during closure. Adaptive Compute and V3 remain separate future
+programs.
 
 ## Preserved external technical-beta evidence
 

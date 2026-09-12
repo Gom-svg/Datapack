@@ -2,9 +2,12 @@
 
 Productization phase: P7
 
-Status: **IMPLEMENTED**, locally **CERTIFIED**.
+Status: **CERTIFIED — CLOSED**.
 
-Hosted certification: **PENDING**. P7 is not formally closed.
+Local and hosted certification passed at technical commit
+`8f70179bd68701ad7dfa7fe909870e880845ad77`. Normal CI run `34546542428`
+and explicit candidate run `34660317844` both completed with **SUCCESS**.
+The downloaded complete candidate bundle also passed verification; see section 8.
 
 Starting checkpoint: `365b1ca3a2b8ca55bc5e20ae8ff40569184c0bad` on
 `productization/foundation`, clean and synchronized with origin at phase start.
@@ -236,7 +239,7 @@ downloaded byte integrity without Python or source using `sha256sum --check` on
 Linux, or compare `Get-FileHash -Algorithm SHA256` values on Windows against the
 six conventional checksum entries.
 
-## 7. Local evidence and remaining work
+## 7. Local certification evidence
 
 All applicable local gates passed in WSL with Rust/Cargo 1.85.0 and CPython
 3.14.4. The final native Linux artifact rehearsal used the current P7 tool,
@@ -262,7 +265,7 @@ not a clean-source release candidate.
 | Crate package verification | **PASS** — `cargo package --locked --allow-dirty`; 175 files, verification build completed |
 | Protected compatibility | **PASS** — four Rust compatibility tests; all six frozen fixture sizes/SHA-256 values unchanged |
 | P6 certification integration | **PASS** — original harness, wheel certifier, and installed-distribution tests byte-identical to P6; CI profile executed from current wheel |
-| Windows native artifacts and complete real two-platform bundle | **PENDING** — require hosted Windows/MSVC execution and aggregation |
+| Windows native artifacts and complete real two-platform bundle | **PASS**, subsequently certified in hosted run `34660317844`; see section 8 |
 
 The local Linux CLI package is 1,336,064 bytes with SHA-256
 `d40d04fa94fd85eeb01c98d635dbe725ec8c77f9fc0cd849645484a9ded82ba4`.
@@ -286,32 +289,137 @@ Synthetic unit fixtures test both package formats and aggregate failure behavior
 synthetic Windows headers and wheel inputs never count as native execution or
 Windows certification. The real 16 GiB P6 dataset is not used or rerun.
 
-Hosted certification remains **PENDING** until user review and push. GitHub
-requires a directly dispatched workflow to exist on the default branch, as
-documented in its [manual workflow guide](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
-Because the existing CI workflow is already registered there, the initial
-branch-only P7 certification uses its opt-in manual route:
+## 8. Hosted certification and closure
+
+The continuation recovered a clean checkout at P7 technical commit
+`8f70179bd68701ad7dfa7fe909870e880845ad77`, synchronized with
+`origin/productization/foundation`. Normal push CI had passed, and no existing
+manual candidate run was present. The authorized branch-only certification used
+the registered CI workflow's opt-in route exactly once:
 
 ```text
 gh workflow run ci.yml --ref productization/foundation -f release_candidate=true
 ```
 
-This uses the workflow definition on the selected branch and calls that same
-revision's P7 workflow without merging, tagging, or automatically creating a
-candidate on push. After the dedicated workflow is independently available on
-the default branch, it can also be dispatched directly:
+| Hosted evidence | Result |
+| --- | --- |
+| Normal push CI [`34546542428`](https://github.com/Gom-svg/Datapack/actions/runs/34546542428) | **SUCCESS** — all 18 required compatibility jobs passed; candidate route skipped |
+| Manual CI [`34660317844`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844), attempt 1 | **SUCCESS** — `workflow_dispatch`, `productization/foundation`, `release_candidate=true`; three P7 jobs passed, normal compatibility groups skipped |
+| Linux candidate job [`103461273675`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844/job/103461273675) | **PASS** — native Linux CLI package and isolated ABI3 wheel |
+| Windows candidate job [`103461273537`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844/job/103461273537) | **PASS** — native MSVC CLI ZIP and isolated ABI3 wheel |
+| Aggregation job [`103462190885`](https://github.com/Gom-svg/Datapack/actions/runs/34660317844/job/103462190885) | **PASS** — both certified platform outputs, complete bundle, manifest/provenance/size/hash validation, independent checksums, final upload |
+| Downloaded final bundle | **PASS** — matching clean-checkout repository verifier and independent `sha256sum --check`, all six entries OK |
+
+The candidate ran on 2026-09-12 UTC (2026-09-11 in America/Costa_Rica).
+GitHub's referenced-workflow record confirms that the caller used
+`.github/workflows/release-candidate.yml` at the same full technical SHA.
+Both native build steps compiled the release CLI with Rust/Cargo 1.85.0 and
+locked dependencies, created the canonical package, extracted it, and executed
+`datapack` or `datapack.exe` outside the checkout. Each logged packaged CLI
+**PASS** for version/help, V1/V2 multichunk validation and decompression, exact
+bytes/SHA-256, overwrite rejection, and malformed-input cleanup.
+
+Both standard `cp39-abi3` wheels passed metadata, tag, member, and privacy
+inspection. Each passed five isolated installed-distribution tests and the
+unchanged P6 CI profile on CPython 3.14.7, with repository source absent from
+runtime import paths and Rust/Cargo/maturin absent from runtime PATH. Each native
+job uploaded its `certification.json` only after these gates passed. Synthetic
+unit fixtures are separate from this native execution evidence.
+
+Aggregation downloaded both platform outputs from this run, required both
+platform records, checked matching clean provenance and unchanged bytes, then
+validated the complete candidate before and after copying it to the final
+directory. Independent SHA-256 verification passed before the seven-file upload.
+
+The manifest and both downloaded platform records agree on:
+
+- source commit `8f70179bd68701ad7dfa7fe909870e880845ad77` and
+  `source.dirty=false`;
+- `Cargo.lock` SHA-256
+  `aa13c3938d8947ec882443f2f39616c77d296987ea1bbbd4f3eb2f409cf660ab`;
+- `python/Cargo.lock` SHA-256
+  `9787c15945b1b088bffd226b46a411ed4905406d190a792eb3f5bccfcff97ceb`;
+- Rust/Cargo `1.85.0`, workflow `CI`, run `34660317844`, attempt `1`; and
+- x86_64 Linux and Windows runtime records and all four distributables' bytes,
+  sizes, hashes, and smoke results.
+
+Linux used `ubuntu-24.04` (image `20260907.300.1`); the native CLI recorded a
+highest observed GLIBC symbol version of 2.34 and smoke execution on glibc 2.39.
+Windows used `windows-latest`, resolved to `windows-2025-vs2026` (image
+`20260907.229.1`). These observations do not establish older glibc portability;
+the Linux wheel's manylinux2014/glibc 2.17 contract remains separate.
+
+The exact retained Actions artifact names and IDs are:
+
+| Actions artifact | ID |
+| --- | --- |
+| `datapack-candidate-linux-8f70179bd68701ad7dfa7fe909870e880845ad77` | `10287212415` |
+| `datapack-candidate-windows-8f70179bd68701ad7dfa7fe909870e880845ad77` | `10287780472` |
+| `datapack-candidate-bundle-8f70179bd68701ad7dfa7fe909870e880845ad77` | `10287287243` |
+
+The final Actions archive is 4,239,516 bytes; GitHub reports SHA-256
+`d014951973424f410fce3114a0558c83025bb728f15bef6da5be31b3e2dfdb53`.
+Its 14-day retention expires on 2026-09-26. This outer Actions archive is a
+transport container, separate from the seven-file candidate contract.
+
+The downloaded candidate contains exactly the section 2 filenames. Each CLI
+archive has the five allowed members, and each wheel has the eight allowed
+members. The recorded final file bytes are:
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `datapack-0.1.0-x86_64-unknown-linux-gnu.tar.gz` | 1,342,520 | `b6a41d5c715f67c20244573a9c411bbc727d2c47ba3c24b869b4d2a928501c96` |
+| `datapack-0.1.0-x86_64-pc-windows-msvc.zip` | 1,100,178 | `0d2f5f66bb40f78c0c8870befe25f467ab67ff45bc797c6b593ee1821dbe3e4e` |
+| `datapack_engine-0.1.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` | 1,032,102 | `cd4ff981635f5a3b72b0e31a59c3b9c0a47113bcebd7da9fcd549dc1dac2f634` |
+| `datapack_engine-0.1.0-cp39-abi3-win_amd64.whl` | 758,023 | `9207df4a540610b73bee7d8f2be2a5777ffbaeae923949385eedc4b581bf0685` |
+| `datapack-0.1.0-RELEASE-NOTES.md` | 2,035 | `e5aafa86b8ddfdd768dd47439aedf9562d5aff198de3c9847524784aea5c2535` |
+| `datapack-0.1.0-manifest.json` | 2,725 | `657477eae1885485708a2ba6405a38a36c7c37251688fd3dfd8aca1118a6789a` |
+| `datapack-0.1.0-SHA256SUMS.txt` | 671 | `d7fa776ef0fb74c66826ba35c6ce32da516621712733901dc37efdcc02761add` |
+
+The checksum-file hash above is recorded evidence; the checksum file itself
+contains only the six required entries and does not checksum itself. The
+canonical manifest's five entries cover the four distributables and notes.
+Before editing closure documentation, the unchanged clean checkout verified the
+downloaded bundle using:
+
+```text
+python3 -B scripts/release_candidate.py verify --bundle <downloaded-bundle> --expected-commit 8f70179bd68701ad7dfa7fe909870e880845ad77
+sha256sum --check datapack-0.1.0-SHA256SUMS.txt
+```
+
+The second command ran inside the downloaded bundle. All downloads and retained
+logs are outside Git in `/tmp/datapack-p7-hosted-34660317844-b3Cr6m/`.
+The two platform records were also compared with the final manifest and files;
+all provenance fields, artifact sizes/hashes, and actual bytes matched.
+
+No hosted failure required a fix or rerun. Linux ran all 21 release-tool tests;
+Windows ran the same suite with the existing symlink-creation test skipped
+because it requires extra privileges (20 passed, one skipped). The symlink
+rejection test passed on Linux; native Windows package/wheel gates were not
+skipped. The download action emitted a non-failing Node `Buffer()` deprecation
+warning, classified as an upstream Actions runtime warning. No validation was
+weakened and no source/workflow change was justified.
+
+P7 is **CERTIFIED — CLOSED**. Closure changes documentation only; already-passed
+expensive local certification was not rerun on the unchanged technical tree.
+No release tooling, Rust/Python behavior, tests, workflows, dependencies,
+lockfiles, `VERSION`, or protected V1/V2 fixtures changed during closure.
+
+The branch-only route does not merge, tag, or automatically create a candidate
+on push. After the dedicated workflow is independently available on the default
+branch, it can also be dispatched directly:
 
 ```text
 gh workflow run release-candidate.yml --ref productization/foundation
 ```
 
-Neither command is run during local implementation. Registration/dispatch remains
-subject to GitHub's repository permissions; no permission or default-branch
-change is performed by P7.
-
-Inspect the hosted Linux/Windows/wheel bundle, record that run and its source
-commit, then close P7. P8 — Desktop Foundation follows only after P7 closure,
-then Final Productization Acceptance. Engine/planner semantics, V1/V2 bytes,
+No permission or default-branch change was performed. Next: user review, push
+the documentation-only P7 closure commit, optionally verify its normal CI, then
+begin P8 — Desktop Foundation. P8 was not begun during closure; Final
+Productization Acceptance follows it. Engine/planner semantics, V1/V2 bytes,
 protected hashes, public APIs, P3/P4/P5 contracts, dependencies, MSRV, ABI3 floor,
 product identity, and `VERSION` are preserved. No Desktop, Adaptive Compute,
-GPU, V3, publication, installer, or auto-update work is included.
+GPU, V3, publication, installer, or auto-update work is included. Development
+version `0.1.0` remains unchanged. There is no public release, published package,
+GitHub Release, signing, notarization, SLSA-level claim, reproducible-build claim,
+macOS/ARM support, or production-readiness claim.
