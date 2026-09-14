@@ -10,3 +10,9 @@ python/DATAPACK-LICENSE-MIT text eol=lf
 docs/releases/*.md text eol=lf
 Cargo.lock text eol=lf
 python/Cargo.lock text eol=lf
+
+# P8 candidate documents/lock and the tiny synthetic CRLF demo stay byte-stable.
+desktop/Cargo.lock text eol=lf
+desktop/README.md text eol=lf
+desktop/app.manifest text eol=lf
+tests/fixtures/desktop/demo.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

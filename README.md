@@ -29,6 +29,22 @@ and [release artifact policy](docs/productization/RELEASE_ARTIFACTS.md).
 The implemented Python wheel contract and its current evidence are documented
 in the [Python distribution guide](docs/productization/PYTHON_DISTRIBUTION.md).
 
+## DataPack Desktop (internal foundation)
+
+The Windows Desktop client provides Analyze → Compress → Validate → Restore
+without a terminal, using the same Rust application services as the CLI and SDK.
+It includes real progress, safe cancellation, protected destinations, and explicit
+integrity results. From a checkout with Rust 1.85.0 and Visual Studio C++ tools:
+
+```powershell
+cargo run --manifest-path desktop/Cargo.toml --release --locked
+```
+
+See the [Desktop usage and demo guide](desktop/README.md) and
+[P8 engineering/certification record](docs/productization/DESKTOP_FOUNDATION.md).
+This is an unsigned internal foundation; hosted P8 certification and operator
+visual acceptance remain pending. No public installer is available.
+
 ## Choose a Compression Path
 
 | Path | Archive | Best fit | Important tradeoff |

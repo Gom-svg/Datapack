@@ -1,6 +1,6 @@
 # CI and repository policy
 
-Status: Phase 14 baseline plus Productization P1-P7 certification controls
+Status: Phase 14 baseline plus Productization P1-P8 certification controls
 
 DataPack's local and hosted checks are pinned to Rust 1.85.0. The crate also
 declares `rust-version = "1.85"`; `rust-toolchain.toml` makes the exact
@@ -87,6 +87,23 @@ Rust/Cargo 1.85.0, and workflow/run/attempt. See
 `docs/productization/RELEASE_ARTIFACTS_AND_ENGINEERING.md`, section 8, for exact
 filenames, hashes, native execution evidence, and limitations. Closure changed
 documentation only; development `VERSION` remains `0.1.0`, and P8 remains next.
+
+## Desktop Foundation checks
+
+P8 adds a reusable `desktop.yml` workflow with native Windows build/test/Clippy,
+executable V1/V2 smoke, real native-window/control smoke, and a Linux
+Desktop dependency/package-policy job. Ordinary CI retains all original 18
+compatibility jobs and adds these two focused jobs. No extra Python matrix is
+introduced. Desktop has a separate manifest and lockfile; all its registry
+versions and checksums must match the certified core inventory.
+
+An explicit manual CI input `desktop_candidate=true` runs only the P8 workflow
+and creates a 14-day internal unsigned Windows ZIP, provenance manifest, and
+checksums. It defaults false. If both manual candidate inputs are true, the
+existing P7 route takes precedence. P7's workflow and seven-file bundle remain
+unchanged. Artifact upload is manual-only and permissions stay `contents: read`.
+Hosted P8 certification and Windows operator visual acceptance are **PENDING**.
+See `docs/productization/DESKTOP_FOUNDATION.md` for evidence and launch commands.
 
 ## Local checks
 

@@ -1,0 +1,87 @@
+name: Desktop Foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Build a private, unsigned Windows Desktop candidate artifact
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      candidate:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Desktop Windows x86_64
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install certified Rust
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Check Desktop version and frozen dependency inventory
+        run: python scripts/desktop_candidate.py check-version
+      - name: Check Desktop formatting
+        run: cargo fmt --manifest-path desktop/Cargo.toml --check
+      - name: Check Desktop
+        run: cargo check --manifest-path desktop/Cargo.toml --locked
+      - name: Test Desktop state and adapter contracts
+        run: cargo test --manifest-path desktop/Cargo.toml --locked
+      - name: Strict Desktop Clippy
+        run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets --all-features --locked -- -D warnings
+      - name: Build native Desktop
+        run: cargo build --manifest-path desktop/Cargo.toml --release --locked
+      - name: Execute native artifact and window smokes
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'desktop/target/release/datapack-desktop.exe'
+          $smoke = Join-Path $env:RUNNER_TEMP ('desktop-smoke-' + [guid]::NewGuid())
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$smoke`"") -PassThru -Wait
+          if ($process.ExitCode -ne 0 -or !(Test-Path (Join-Path $smoke 'SMOKE-PASSED.txt'))) { throw 'Desktop adapter smoke failed' }
+          $process = Start-Process -FilePath $exe -ArgumentList '--ui-smoke' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw 'Native window/control smoke failed' }
+      - name: Build, inspect, extract and certify internal candidate
+        if: inputs.candidate && github.event_name == 'workflow_dispatch'
+        run: python scripts/desktop_candidate.py build --out dist/desktop
+      - name: Upload internal candidate only on explicit manual request
+        if: inputs.candidate && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: datapack-desktop-windows-${{ github.sha }}
+          path: dist/desktop/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  policy:
+    name: Desktop dependency and package policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install certified Rust
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Check Desktop dependency policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.85.0"
+          manifest-path: ./desktop/Cargo.toml
+          command: check
+      - name: Install pinned audit tool
+        run: cargo install cargo-audit --locked --version 0.22.1
+      - name: Audit Desktop lockfile
+        run: cargo audit --file desktop/Cargo.lock
+      - name: Test candidate package inspection
+        run: python -m unittest discover -s scripts/tests -p test_desktop_candidate.py -v

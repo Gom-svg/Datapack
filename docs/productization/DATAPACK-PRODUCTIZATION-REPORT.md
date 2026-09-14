@@ -57,7 +57,7 @@ This report uses only these status labels:
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
 | P6 — Technical Beta II | **CERTIFIED — CLOSED** | Local certification passed, including current installed-wheel CI/manual beta, release CLI, security/package, protected compatibility, and supplemental 16 GiB evidence review. Hosted certification passed in run `34404009535`: SUCCESS, all 18 required jobs passed. P6 is formally closed. See `TECHNICAL_BETA_II.md`. |
 | P7 — Release Artifacts / Release Engineering | **CERTIFIED — CLOSED** | Local certification and normal CI `34546542428` passed. Manual candidate run `34660317844` passed Linux native, Windows/MSVC native, and aggregation; the downloaded seven-file bundle passed manifest, checksums, and matching clean-source verification at `8f70179bd68701ad7dfa7fe909870e880845ad77`. See `RELEASE_ARTIFACTS_AND_ENGINEERING.md`. |
-| P8 — Desktop Foundation | **DEFERRED** | Desktop architecture and implementation remain deferred. |
+| P8 — Desktop Foundation | **IMPLEMENTED** | Native Windows Rust client over the existing Application API; local certification recorded in `DESKTOP_FOUNDATION.md`. Hosted Windows/Desktop certification and operator visual acceptance: **PENDING**. P8 closure and Final Productization Acceptance have not begun. |
 
 ## P0 outcome
 
@@ -1074,10 +1074,48 @@ and development `VERSION` 0.1.0. It introduces no public release, registry uploa
 tag, signature, installer, supply-chain certification claim, or production-
 readiness claim. There is no GitHub Release, notarization, SLSA-level claim,
 reproducible-build claim, macOS/ARM support, or broader older-glibc certification.
-P8 remains **DEFERRED** and is next after user review, push of the
-documentation-only P7 closure commit, and optional normal-CI verification.
-P8 was not begun during closure. Adaptive Compute and V3 remain separate future
-programs.
+At P7 closure, P8 remained **DEFERRED**; it was not begun during that
+documentation-only closure. P7 closure CI `34820837471` subsequently passed.
+P8 implementation is recorded in the following section. Adaptive Compute and
+V3 remain separate future programs.
+
+## P8 Desktop Foundation outcome
+
+P8 establishes a separate `datapack-desktop` Rust crate with native Windows
+controls, file dialogs, and a narrow worker adapter over the frozen application
+services. It implements file selection, honest sampled analysis, Automatic and
+Chunked compression, real phase progress, cooperative cancellation, result
+summaries, validation/source agreement, and restoration with accurate V1/V2
+integrity claims. All output operations retain the engine's transactional safety;
+Desktop never enables overwrite or retained partial output.
+
+The shell uses Microsoft `windows-sys 0.61.2` (MIT OR Apache-2.0), already present
+in the root dependency inventory. Its separate lockfile reuses the exact
+certified registry versions/checksums. An egui prototype was rejected at policy
+investigation because of an unmaintained font-parser advisory and additional
+license requirements. No policy exception or MSRV increase was introduced.
+
+The controlled Desktop workflow adds focused native Windows and package-policy
+checks while preserving the original normal-CI compatibility jobs. Manual
+`desktop_candidate=true` routes the registered CI workflow to P8 certification
+and an unsigned internal ZIP/manifest/checksum artifact. The existing P7 candidate
+workflow, scripts, archive/wheel contracts, and seven-file bundle are unchanged.
+No publication, push, merge, tag, signing, or automatic-update action is part of P8.
+
+Local certification passed: 382 core Rust tests, 28 Desktop tests on Linux and
+native Windows, strict checks/builds, 30 release-tool tests, 15 SDK tests, fresh
+isolated ABI3/P6 certification, all dependency/audit/package gates, and frozen
+V1/V2 compatibility. The final 676,557-byte native Windows ZIP passed inspection,
+extracted adapter/window smokes, provenance verification, and independent
+checksums. It is explicitly a dirty-source local rehearsal. The runnable local
+executable and a real window capture are retained under ignored `dist/`.
+
+Detailed gate results, native executable evidence, limitations, and the
+operator demo are recorded in `DESKTOP_FOUNDATION.md` and `desktop/README.md`.
+Hosted P8 certification is **PENDING**. Operator visual acceptance is **PENDING**.
+P8 is not closed and the whole product is not declared accepted. Next: user
+review, push, hosted Desktop certification, Windows operator review,
+documentation-only P8 closure, then Final Productization Acceptance.
 
 ## Preserved external technical-beta evidence
 

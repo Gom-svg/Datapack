@@ -9,13 +9,17 @@ on:
         description: Build the internal P7 candidate instead of the compatibility matrix
         type: boolean
         default: false
+      desktop_candidate:
+        description: Run controlled P8 Windows Desktop certification and internal artifact generation
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   rust:
-    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    if: github.event_name != 'workflow_dispatch' || (!inputs.release_candidate && !inputs.desktop_candidate)
     name: Rust 1.85 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -39,7 +43,7 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   python:
-    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    if: github.event_name != 'workflow_dispatch' || (!inputs.release_candidate && !inputs.desktop_candidate)
     name: Python SDK foundation
     runs-on: ubuntu-latest
     steps:
@@ -71,7 +75,7 @@ jobs:
         run: python -m unittest discover -s python/tests -v
 
   python-wheel-build:
-    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    if: github.event_name != 'workflow_dispatch' || (!inputs.release_candidate && !inputs.desktop_candidate)
     name: Python wheel build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -109,7 +113,7 @@ jobs:
           compression-level: 0
 
   python-wheel-test:
-    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    if: github.event_name != 'workflow_dispatch' || (!inputs.release_candidate && !inputs.desktop_candidate)
     name: Python wheel (${{ matrix.platform }}, CPython ${{ matrix.python-version }})
     needs: python-wheel-build
     runs-on: ${{ matrix.os }}
@@ -144,7 +148,7 @@ jobs:
           --platform ${{ matrix.platform }}
 
   policy-and-package:
-    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    if: github.event_name != 'workflow_dispatch' || (!inputs.release_candidate && !inputs.desktop_candidate)
     name: Dependency policy and package
     runs-on: ubuntu-latest
     steps:
@@ -176,3 +180,10 @@ jobs:
     name: Explicit internal candidate build
     if: github.event_name == 'workflow_dispatch' && inputs.release_candidate
     uses: ./.github/workflows/release-candidate.yml
+
+  desktop:
+    name: Desktop foundation
+    if: github.event_name != 'workflow_dispatch' || !inputs.release_candidate
+    uses: ./.github/workflows/desktop.yml
+    with:
+      candidate: ${{ github.event_name == 'workflow_dispatch' && inputs.desktop_candidate }}
