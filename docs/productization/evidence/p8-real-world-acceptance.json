@@ -1,0 +1,372 @@
+{
+  "acceptance_completed": true,
+  "analysis": {
+    "delimiter": ",",
+    "diagnostics": [
+      {
+        "code": "SAMPLE_RECORD_LIMIT_REACHED",
+        "column_index": null,
+        "message": "Analysis stopped at the configured record sampling limit.",
+        "severity": "warning"
+      },
+      {
+        "code": "DUPLICATE_COLUMN_NAME",
+        "column_index": 4,
+        "message": "The column name duplicates an earlier column name.",
+        "severity": "warning"
+      },
+      {
+        "code": "CARDINALITY_LIMIT_REACHED",
+        "column_index": 5,
+        "message": "Observed cardinality hash tracking was censored by an analysis limit.",
+        "severity": "warning"
+      },
+      {
+        "code": "CARDINALITY_LIMIT_REACHED",
+        "column_index": 7,
+        "message": "Observed cardinality hash tracking was censored by an analysis limit.",
+        "severity": "warning"
+      }
+    ],
+    "format": "csv",
+    "interpretation": "Sample-derived advice only; full V1 Structured is not executed.",
+    "planner": {
+      "candidate_archive_modes": [
+        "csv_columnar_dictionary",
+        "raw_zstd"
+      ],
+      "candidate_column_strategies": [
+        "dictionary",
+        "plain",
+        "delta_candidate",
+        "raw"
+      ],
+      "estimated_dictionary_memory_mib": 3420.8477,
+      "estimated_savings_percent": 13.583547,
+      "policy": {
+        "name": "PlannerPolicyV1",
+        "version": 1
+      },
+      "reason": {
+        "code": "HIGH_REPETITION_DETECTED",
+        "message": "High repetition detected in 9/11 columns."
+      },
+      "selected_archive_mode": "csv_columnar_dictionary",
+      "selection_scope": "planner_recommendation"
+    },
+    "sampling": {
+      "bytes_analyzed": 979049,
+      "bytes_read": 979049,
+      "completeness": "partial",
+      "configured_max_bytes": 67108864,
+      "configured_max_records": 10000,
+      "final_newline": null,
+      "limit_reached": "record_limit",
+      "limited": true,
+      "records_analyzed": 10000,
+      "scope": "sampled",
+      "source_size_bytes": 17052760651
+    }
+  },
+  "artifacts": {
+    "archive.dpack": 3541994339,
+    "restored.csv": 17052760651
+  },
+  "cancel_retry_requested": true,
+  "cancellation": {
+    "cooperatively_cancelled": true,
+    "elapsed_seconds": 7.292591296994942,
+    "exception_category": "cancellation",
+    "exception_code": "cancelled",
+    "false_terminal_success": false,
+    "final_destination_absent": true,
+    "passed": true,
+    "progress": {
+      "committed_output_at_terminal": null,
+      "event_count": 14,
+      "last_event": {
+        "completed_bytes": 872415232,
+        "stage": "compressing",
+        "state": "advanced",
+        "terminal": false,
+        "total_bytes": 17052760651
+      },
+      "phases": {
+        "compressing": {
+          "advanced_events": 13,
+          "events": 14,
+          "last_total_bytes": 17052760651,
+          "max_completed_bytes": 872415232,
+          "max_completed_items": 13
+        }
+      },
+      "terminal_count": 0,
+      "violations": []
+    },
+    "requested": true,
+    "requested_after_bytes": 872415232,
+    "retry_succeeded": true,
+    "trigger_bytes": 852638033,
+    "unexpected_or_partial_files": []
+  },
+  "compression": {
+    "archive_size_bytes": 3541994339,
+    "archive_version": 2,
+    "backend": "chunked_raw_zstd",
+    "chunk_count": 255,
+    "chunk_count_from_configuration": 255,
+    "diagnostics": [],
+    "input_size_bytes": 17052760651,
+    "profile": {
+      "planning_ms": null,
+      "read_ms": 164817,
+      "throughput_mib_per_second": 93.062354872989,
+      "total_ms": 174752,
+      "transform_ms": 174751,
+      "write_ms": null
+    },
+    "ratio": 4.814451695542362,
+    "reduction_percent": 79.22920275789895,
+    "report_type": "compression",
+    "schema_version": 1,
+    "selected_mode": "chunked_raw_zstd"
+  },
+  "configuration": {
+    "adaptive_level": false,
+    "backend": "chunked_raw_zstd",
+    "chunk_size_bytes": 67108864,
+    "max_in_flight_chunks": 4,
+    "max_memory_bytes": 268435456,
+    "threads": 4
+  },
+  "decompression": {
+    "archive_size_bytes": 3541994339,
+    "archive_version": 2,
+    "backend": "v2_raw_zstd_frame",
+    "diagnostics": [],
+    "profile": {
+      "planning_ms": null,
+      "read_ms": 194857,
+      "throughput_mib_per_second": 49.4024445746154,
+      "total_ms": 329192,
+      "transform_ms": 27741,
+      "write_ms": 85041
+    },
+    "report_type": "decompression",
+    "restored_size_bytes": 17052760651,
+    "schema_version": 1,
+    "selected_mode": "chunked_raw_zstd",
+    "verified": true
+  },
+  "environment": {
+    "datapack_version": "0.1.0",
+    "harness_sha256": "29f28e3a8f0b1714b4d99b1be7c6977c69fb1ba1859baaae3b69b4aa12fb9e10",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+    "python": "3.14.4",
+    "sdk_distribution": "datapack-engine"
+  },
+  "finished_utc": "2026-09-14T22:49:28.557216+00:00",
+  "independent_verification": {
+    "byte_for_byte_match": true,
+    "elapsed_seconds": 235.29115585700492,
+    "initial_source_hash_match": true,
+    "read_buffer_bytes_per_stream": 4194304,
+    "restored_bytes": 17052760651,
+    "restored_sha256": "d13635e297c64673826217631fb88d635c4f506052e1bde833895eda2a65c3f2",
+    "sha256_match": true,
+    "size_match": true,
+    "source_bytes": 17052760651,
+    "source_sha256": "d13635e297c64673826217631fb88d635c4f506052e1bde833895eda2a65c3f2"
+  },
+  "input": {
+    "basename": "HI-Large_Trans.csv",
+    "bytes": 17052760651,
+    "sha256": "d13635e297c64673826217631fb88d635c4f506052e1bde833895eda2a65c3f2"
+  },
+  "operations": {
+    "analyze": {
+      "elapsed_seconds": 0.02812821300176438,
+      "progress": {
+        "committed_output_at_terminal": null,
+        "event_count": 4,
+        "last_event": {
+          "completed_bytes": 0,
+          "stage": "finalizing",
+          "state": "completed",
+          "terminal": true,
+          "total_bytes": null
+        },
+        "phases": {
+          "analyzing": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": 67108864,
+            "max_completed_bytes": 979049,
+            "max_completed_items": 0
+          },
+          "finalizing": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": null,
+            "max_completed_bytes": 0,
+            "max_completed_items": 0
+          }
+        },
+        "terminal_count": 1,
+        "violations": []
+      }
+    },
+    "compress": {
+      "elapsed_seconds": 174.76178706599603,
+      "progress": {
+        "committed_output_at_terminal": true,
+        "event_count": 259,
+        "last_event": {
+          "completed_bytes": 0,
+          "stage": "finalizing",
+          "state": "completed",
+          "terminal": true,
+          "total_bytes": null
+        },
+        "phases": {
+          "compressing": {
+            "advanced_events": 255,
+            "events": 257,
+            "last_total_bytes": 17052760651,
+            "max_completed_bytes": 17052760651,
+            "max_completed_items": 255
+          },
+          "finalizing": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": null,
+            "max_completed_bytes": 0,
+            "max_completed_items": 0
+          }
+        },
+        "terminal_count": 1,
+        "violations": []
+      }
+    },
+    "decompress": {
+      "elapsed_seconds": 329.5279440480008,
+      "progress": {
+        "committed_output_at_terminal": true,
+        "event_count": 259,
+        "last_event": {
+          "completed_bytes": 0,
+          "stage": "finalizing",
+          "state": "completed",
+          "terminal": true,
+          "total_bytes": null
+        },
+        "phases": {
+          "decompressing": {
+            "advanced_events": 255,
+            "events": 257,
+            "last_total_bytes": 17052760651,
+            "max_completed_bytes": 17052760651,
+            "max_completed_items": 255
+          },
+          "finalizing": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": null,
+            "max_completed_bytes": 0,
+            "max_completed_items": 0
+          }
+        },
+        "terminal_count": 1,
+        "violations": []
+      }
+    },
+    "validate": {
+      "elapsed_seconds": 226.02745430600044,
+      "progress": {
+        "committed_output_at_terminal": null,
+        "event_count": 4,
+        "last_event": {
+          "completed_bytes": 0,
+          "stage": "finalizing",
+          "state": "completed",
+          "terminal": true,
+          "total_bytes": null
+        },
+        "phases": {
+          "finalizing": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": null,
+            "max_completed_bytes": 0,
+            "max_completed_items": 0
+          },
+          "validating": {
+            "advanced_events": 0,
+            "events": 2,
+            "last_total_bytes": 3541994339,
+            "max_completed_bytes": 3541994339,
+            "max_completed_items": 0
+          }
+        },
+        "terminal_count": 1,
+        "violations": []
+      }
+    }
+  },
+  "outputs_retained": true,
+  "preflight": {
+    "archive_budget_bytes": 17224369474,
+    "available_free_bytes": 59813765120,
+    "input_bytes": 17052760651,
+    "required_free_bytes": 42867064717,
+    "reserve_bytes": 8589934592,
+    "restored_budget_bytes": 17052760651,
+    "source_copy_bytes": 0,
+    "source_hash_seconds": 106.833411849002,
+    "space_policy": "source-size archive + 1% + table/header allowance, one restoration, 8 GiB reserve",
+    "transaction_policy": "one new partial becomes the final file by commit; no overwrite"
+  },
+  "profile": "full",
+  "schema_version": 1,
+  "space_after_run": {
+    "artifact_bytes": 20594754990,
+    "available_free_bytes": 38219882496
+  },
+  "space_before_restore": {
+    "available_free_bytes": 55098384384,
+    "required_free_bytes": 25642695243
+  },
+  "stage": "complete",
+  "started_utc": "2026-09-14T22:33:15.537254+00:00",
+  "status": "passed",
+  "timing_disclaimer": "Timings are observational, include observer/verification overhead, and depend on storage, filesystem, caches, hardware and platform. Planner estimates from a sample are not guarantees or measurements of full-run behavior. The V2 admission limit is not a process-RSS ceiling.",
+  "validation": {
+    "against": {
+      "source_size_bytes": 17052760651,
+      "status": "matched"
+    },
+    "archive": {
+      "archive_size_bytes": 3541994339,
+      "chunk_count": 255,
+      "format": "dpack_v2",
+      "original_size_bytes": 17052760651,
+      "payload_mode": "chunked_raw_zstd",
+      "version": 2
+    },
+    "checks": {
+      "chunk_table": "passed",
+      "decompression": "passed",
+      "global_sha256": "passed",
+      "header": "passed",
+      "metadata": "passed",
+      "payload_structure": "passed",
+      "per_chunk_sha256": "passed",
+      "restored_length": "passed",
+      "trailing_data": "passed"
+    },
+    "diagnostics": [],
+    "report_type": "validation",
+    "schema_version": 1,
+    "valid": true
+  }
+}

@@ -39,6 +39,7 @@ This report uses only these status labels:
 | Hosted P6 Technical Beta II CI | **CERTIFIED** | run `34404009535` at technical checkpoint `621574a2607e3857fe932dbe9db8ec6eddc5a9fd`; SUCCESS, all 18 required jobs passed |
 | Hosted P7 normal CI | **CERTIFIED** | run `34546542428` at technical checkpoint `8f70179bd68701ad7dfa7fe909870e880845ad77`; SUCCESS, all 18 required jobs passed |
 | Hosted P7 release candidate | **CERTIFIED** | run `34660317844`, attempt 1, at the same P7 technical checkpoint; SUCCESS, Linux native, Windows/MSVC native, aggregation, and downloaded seven-file bundle verification passed |
+| Hosted P8 Desktop Foundation | **CERTIFIED** | normal CI `34893776372` and controlled Windows/Desktop run `34894959730`, both SUCCESS at `6380351ecfbaebc8e593877f8682dce6256588fd`; formal P8 closure remains pending |
 | Rust toolchain | **CERTIFIED** | Rust/Cargo 1.85.0 |
 | Rust test suite | **CERTIFIED** | 359 tests, zero failures at modernization closure |
 | Archive compatibility | **CERTIFIED** | frozen v1/v2 fixtures, sizes, SHA-256 values, and byte-exact guarantees |
@@ -57,7 +58,7 @@ This report uses only these status labels:
 | P5 — Product API & Error Experience Polish | **CERTIFIED — CLOSED** | Additive Rust error categories/codes, contextual CLI rendering/help, Python docstrings/typing/exception identity, focused compatibility tests, and public API/error documentation passed local certification and all 18 hosted jobs in run `32716713250`. |
 | P6 — Technical Beta II | **CERTIFIED — CLOSED** | Local certification passed, including current installed-wheel CI/manual beta, release CLI, security/package, protected compatibility, and supplemental 16 GiB evidence review. Hosted certification passed in run `34404009535`: SUCCESS, all 18 required jobs passed. P6 is formally closed. See `TECHNICAL_BETA_II.md`. |
 | P7 — Release Artifacts / Release Engineering | **CERTIFIED — CLOSED** | Local certification and normal CI `34546542428` passed. Manual candidate run `34660317844` passed Linux native, Windows/MSVC native, and aggregation; the downloaded seven-file bundle passed manifest, checksums, and matching clean-source verification at `8f70179bd68701ad7dfa7fe909870e880845ad77`. See `RELEASE_ARTIFACTS_AND_ENGINEERING.md`. |
-| P8 — Desktop Foundation | **IMPLEMENTED** | Native Windows Rust client over the existing Application API; local certification recorded in `DESKTOP_FOUNDATION.md`. Hosted Windows/Desktop certification and operator visual acceptance: **PENDING**. P8 closure and Final Productization Acceptance have not begun. |
+| P8 — Desktop Foundation | **CERTIFIED** foundation; phase open | Native Windows Rust client over the existing Application API; local/hosted certification and owner-confirmed small-fixture manual functional pass recorded in `DESKTOP_FOUNDATION.md`. Public SDK 16 GiB Real-World Hardening passed locally; see `REAL_WORLD_ACCEPTANCE.md`. Visual redesign, large-file Desktop operator execution, final visual acceptance, and formal P8 closure remain pending. Final Productization Acceptance has not begun. |
 
 ## P0 outcome
 
@@ -1112,10 +1113,56 @@ executable and a real window capture are retained under ignored `dist/`.
 
 Detailed gate results, native executable evidence, limitations, and the
 operator demo are recorded in `DESKTOP_FOUNDATION.md` and `desktop/README.md`.
-Hosted P8 certification is **PENDING**. Operator visual acceptance is **PENDING**.
-P8 is not closed and the whole product is not declared accepted. Next: user
-review, push, hosted Desktop certification, Windows operator review,
-documentation-only P8 closure, then Final Productization Acceptance.
+Foundation hosted certification passed at
+`6380351ecfbaebc8e593877f8682dce6256588fd`: normal CI
+[34893776372](https://github.com/Gom-svg/Datapack/actions/runs/34893776372) and
+controlled Windows/Desktop run
+[34894959730](https://github.com/Gom-svg/Datapack/actions/runs/34894959730).
+The owner added Real-World Hardening before visual redesign and formal closure.
+Operator visual acceptance remains **PENDING**. P8 is not closed and the whole
+product is not declared accepted. The next product task after hardening is
+**2026 Desktop visual redesign concept and implementation**; Windows operator
+acceptance, documentation-only P8 closure, and Final Productization Acceptance
+remain later work.
+
+## P8 Real-World Hardening outcome
+
+The public Python SDK consumer `scripts/real_world_acceptance.py` is implemented
+and locally certified. It uses public Analyze, explicit bounded V2 Compress,
+CancellationToken, Validate against original, and verified Decompress, then
+independent streaming Python size/SHA-256/byte comparison. Fresh external work
+directories, conservative capacity checks, disabled overwrite/partial retention,
+compact progress aggregation, stable errors, and retained JSON evidence preserve
+the existing product contracts. No dependency or Rust/Desktop code changed.
+
+A new full SDK run on external `HI-Large_Trans.csv` completed on 2026-09-14 and
+was recovered after interruption without repeating operations. Input:
+17,052,760,651 bytes. Partial analysis inspected 10,000 records / 979,049 bytes,
+recommended Structured, and estimated 13.583547% savings / 3420.8477 MiB dictionary
+memory. Actual compression deliberately used bounded V2 RawZstd, 64 MiB chunks,
+four threads, four in-flight chunks, and 256 MiB admission: 3,541,994,339 archive
+bytes, 255 chunks, 4.8145× ratio, 79.23% reduction. Progress-triggered cancellation
+after 872,415,232 bytes preserved a clean transaction; retry passed. Validation
+matched the original with all nine checks passing. Verified restoration and
+independent size, SHA-256, and full byte comparison all passed. This is separate
+P8 SDK evidence, not a relabeling of P6's engine/CLI run. Timings are observational.
+
+The 20,594,754,990 bytes of archive/restoration remain outside Git; only the
+[compact metadata receipt](evidence/p8-real-world-acceptance.json) is committed.
+Focused tests passed: 25 harness tests and 15 existing SDK tests on Linux;
+16 native Windows helper tests passed, with eight unavailable-SDK and one
+symlink-privilege skips. Python 3.9 grammar, Ruff, version consistency, workflow
+syntax, and diff checks passed. Previous unchanged Rust/security/package gates
+were reused. Normal CI gains one tiny-fixture consumer test step; its hosted
+execution remains **PENDING**, and no real dataset is added to CI.
+
+`REAL_WORLD_ACCEPTANCE.md` records exact results, storage behavior, limitations,
+the narrowly scoped Windows error-path redaction correction, and the same-file
+Desktop operator procedure. **Real-World SDK Hardening is complete locally**;
+Desktop 16 GiB operator execution and final visual/operator acceptance remain
+pending. The next separate stage is **P8 — 2026 Desktop Visual Redesign**, from
+an approved concept/spec. P8 is not closed, and Final Productization Acceptance
+has not begun.
 
 ## Preserved external technical-beta evidence
 

@@ -2,9 +2,22 @@
 
 Development version: **0.1.0**. Primary target: **Windows x86_64 / MSVC**.
 
-Status: **IMPLEMENTED — LOCAL CERTIFICATION PASSED**. Hosted P8
-certification: **PENDING**. Operator visual acceptance: **PENDING**.
-P8 does not close Final Productization Acceptance or authorize publication.
+Desktop Foundation status: **CERTIFIED — LOCAL AND HOSTED** at
+`6380351ecfbaebc8e593877f8682dce6256588fd`. Normal CI
+[34893776372](https://github.com/Gom-svg/Datapack/actions/runs/34893776372) and
+controlled Windows Desktop certification
+[34894959730](https://github.com/Gom-svg/Datapack/actions/runs/34894959730) passed.
+P8 remains **OPEN**: [Real-World Hardening](REAL_WORLD_ACCEPTANCE.md) is a
+separate stage before visual redesign, operator visual acceptance, and formal
+closure. This evidence does not authorize publication or begin Final
+Productization Acceptance.
+
+The owner confirmed independent hosted-candidate download/verification and a
+manual `demo.csv` functional roundtrip (Analyze, Compress, Validate against
+original, Decompress, independent SHA-256 and byte comparison). Small-fixture
+functional acceptance is distinct from the later large-file operator procedure
+and final visual acceptance. Real-World SDK Hardening subsequently passed; see
+the separate receipt and results in `REAL_WORLD_ACCEPTANCE.md`.
 
 ## 1. Recovered baseline and architectural audit
 
@@ -296,7 +309,9 @@ The final Windows local rehearsal is retained outside version control:
 The current Linux wheel is **991,610 bytes**, SHA-256
 `44f064b5d2f249386150aa11b6dafffe21231506fb6220eedb99fce5a55a8312`.
 It passed the unchanged installed-distribution/P6 certifier. No real 16 GiB
-workload or manual beta-scale performance run was repeated.
+workload or manual beta-scale performance run was repeated during Foundation
+certification. The subsequent SDK acceptance stage is recorded separately in
+`REAL_WORLD_ACCEPTANCE.md`.
 
 Retained logs use the `/tmp/datapack-p8-` prefix outside Git. Principal suffixes:
 `core-gates.log`, `binding-gates.log`, `tests-final.log`, `clippy-final.log`,
@@ -324,17 +339,23 @@ presentation/calculations, Controller transitions/concurrency, and adapter
 integration. They cover the A–O acceptance scenarios; engine internals are not
 reimplemented in Desktop tests.
 
-Operator review on Windows must still check readable layout at normal/high DPI,
-keyboard navigation, file dialogs, progress/cancellation on a meaningful local
-file, error recovery, output paths, and the complete demo sequence in
-`desktop/README.md`. Automated launch checks cannot judge stakeholder polish.
+The owner has confirmed the complete small-fixture functional demo, including
+independent exactness. Final operator review after the separate visual redesign
+must still assess readable layout at normal/high DPI, keyboard navigation,
+dialogs, responsiveness/progress/cancellation on a meaningful local file, error
+recovery, and output paths. The large-file procedure is in
+`REAL_WORLD_ACCEPTANCE.md`. Automated launch checks cannot judge stakeholder
+polish.
 
 Deferred: custom dark mode, official icon, installer/file associations, persisted
 settings/recent files, advanced resource controls, Linux GUI, macOS/ARM, broad
 accessibility certification, and public distribution. No cloud, telemetry,
 authentication, licensing, GPU, V3, or Adaptive Compute work is included.
 
-The next sequence is user review → push `productization/foundation` → normal CI
-and controlled hosted Windows/Desktop certification → operator visual review →
-documentation-only P8 closure → Final Productization Acceptance. No hosted run
-is claimed until it actually executes. P8 remains open until that closure.
+The Foundation checkpoint subsequently passed normal CI and controlled hosted
+Windows/Desktop certification in the runs linked above. The owner added a
+controlled Real-World Hardening stage before visual redesign and closure.
+After that stage, the next product task is **2026 Desktop visual redesign
+concept and implementation**, followed by its relevant certification and Windows
+operator acceptance. Documentation-only P8 closure and Final Productization
+Acceptance remain later work. Foundation certification alone does not close P8.
